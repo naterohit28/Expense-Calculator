@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flavor Fusion | Business Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        primary: '#EA580C',
+                        darkBg: '#0F172A',
+                        darkCard: '#1E293B',
+                        lightBg: '#F8FAFC',
+                        lightCard: '#FFFFFF'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root { --accent: #EA580C; }
+        body { font-family: 'Inter', sans-serif; transition: background-color 0.3s ease; }
+        
+        /* Theme Transition */
+        .dark body { background-color: #0F172A; color: #F1F5F9; }
+        .light body { background-color: #F8FAFC; color: #0F172A; }
+
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; backdrop-filter: blur(8px); }
+        .modal.active { display: flex; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        #toast { position: fixed; bottom: 24px; right: 24px; display: none; z-index: 150; }
+        
+        /* Custom UI Elements */
+        .sidebar-item { @apply flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 cursor-pointer font-medium; }
+        .sidebar-active { @apply bg-orange-600/10 text-orange-500 border-r-4 border-orange-600 rounded-r-none; }
+        
+        .card { @apply rounded-2xl border transition-all duration-200; }
+        .dark .card { @apply bg-[#1E293B] border-[#334155] shadow-xl shadow-black/20; }
+        .light .card { @apply bg-white border-[#E2E8F0] shadow-sm; }
+
+        .btn-primary { @apply bg-[#EA580C] hover:bg-[#C2410C] text-white px-5 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 active:scale-95; }
+        .btn-secondary { @apply border border-slate-500/30 hover:bg-slate-500/10 px-5 py-2.5 rounded-xl font-semibold transition-all; }
+        
+        .data-label { @apply text-[10px] font-bold uppercase tracking-widest text-slate-400; }
+        .table-row { @apply border-b transition-colors; }
+        .dark .table-row { @apply border-slate-800 hover:bg-slate-800/40; }
+        .light .table-row { @apply border-slate-100 hover:bg-slate-50; }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <div id="toast" class="bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl font-bold flex items-center gap-3 border border-slate-700">
+        <span class="w-2 h-2 bg-green-500 rounded-full"></span> <span id="toast-msg">Success</span>
+    </div>
+
+    <aside id="sidebar" class="fixed left-0 top-0 h-full w-64 border-r z-50 transition-all bg-white dark:bg-[#0F172A] dark:border-slate-800 border-slate-200 hidden lg:flex flex-col">
+        <div class="p-6">
+            <div class="flex items-center gap-3 mb-2">
+                <img src="logo.png" class="h-8 w-auto object-contain" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                <div class="hidden h-8 w-8 bg-orange-600 text-white rounded-lg flex items-center justify-center font-black">FF</div>
+                <h1 class="text-xl font-black tracking-tighter text-orange-600">FLAVOR FUSION</h1>
+            </div>
+            <p class="data-label">Business Control Panel</p>
+        </div>
+
+        <nav class="flex-1 px-4 space-y-2 mt-4">
+            <div onclick="switchTab('dashboard')" id="nav-dashboard" class="sidebar-item hover:text-orange-500">
+                <span>📊</span> Dashboard
+            </div>
+            <div onclick="switchTab('events')" id="nav-events" class="sidebar-item hover:text-orange-500">
+                <span>📅</span> Events
+            </div>
+            <div onclick="switchTab('expenses')" id="nav-expenses" class="sidebar-item hover:text-orange-500">
+                <span>💸</span> Expenses
+            </div>
+            <div onclick="switchTab('vendors')" id="nav-vendors" class="sidebar-item hover:text-orange-500">
+                <span>🤝</span> Vendors
+            </div>
+        </nav>
+
+        <div class="p-6 border-t dark:border-slate-800">
+            <p class="text-[10px] font-bold text-slate-500 uppercase">Version 4.0 Stable</p>
+        </div>
+    </aside>
+
+    <header class="lg:ml-64 h-16 border-b dark:border-slate-800 border-slate-200 flex items-center justify-between px-6 sticky top-0 bg-white/80 dark:bg-[#0F172A]/80 backdrop-blur-md z-40">
+        <div class="flex items-center gap-4">
+            <button onclick="toggleMobileSidebar()" class="lg:hidden text-2xl">☰</button>
+            <h2 id="current-tab-title" class="font-bold text-lg">Dashboard</h2>
+        </div>
+        <div class="flex items-center gap-4">
+            <button onclick="toggleTheme()" class="p-2 rounded-full hover:bg-slate-500/10 text-xl" id="theme-toggle-btn">🌙</button>
+            <div class="h-8 w-8 rounded-full bg-slate-500/20 border border-slate-500/30"></div>
+        </div>
+    </header>
+
+    <main class="lg:ml-64 p-4 md:p-8">
+        
+        <section id="dashboard" class="tab-content active space-y-8">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4" id="stats-grid"></div>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="lg:col-span-2 card p-6">
+                    <h2 class="text-lg font-bold mb-6 flex items-center gap-2"><span class="w-1.5 h-6 bg-amber-500 rounded-full"></span> Overdue Collections</h2>
+                    <div id="overdue-list" class="space-y-4"></div>
+                </div>
+                <div class="card p-6 flex flex-col gap-4">
+                    <h2 class="data-label">Quick Actions</h2>
+                    <button onclick="openEventModal()" class="btn-primary w-full justify-center">+ Add New Event</button>
+                    <button onclick="openExpenseModal()" class="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl font-semibold w-full justify-center">+ Record Expense</button>
+                    <button onclick="openVendorModal()" class="btn-secondary w-full justify-center">Register Vendor</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="events" class="tab-content space-y-6">
+            <div class="flex justify-between items-center">
+                <h2 class="text-2xl font-black">Event Portfolio</h2>
+                <button onclick="openEventModal()" class="btn-primary">+ Add Event</button>
+            </div>
+            <div id="events-list" class="grid grid-cols-1 md:grid-cols-3 gap-6"></div>
+        </section>
+
+        <section id="expenses" class="tab-content space-y-6">
+            <div class="flex justify-between items-center">
+                <h2 class="text-2xl font-black">Expense Ledger</h2>
+                <button onclick="openExpenseModal()" class="btn-primary bg-red-600 hover:bg-red-700">+ Record Expense</button>
+            </div>
+            <div class="card p-4 flex justify-around text-center">
+                <div><p class="data-label">Total Entries</p><p id="exp-count" class="text-2xl font-black">0</p></div>
+                <div class="w-px bg-slate-500/20"></div>
+                <div><p class="data-label">Total Outflow</p><p id="exp-total-val" class="text-2xl font-black text-red-500">₹0</p></div>
+            </div>
+            <div class="card overflow-hidden overflow-x-auto">
+                <table class="w-full text-left min-w-[1000px]">
+                    <thead class="bg-slate-500/5 border-b dark:border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        <tr>
+                            <th class="p-4">Date</th><th class="p-4">Event</th><th class="p-4">Vendor</th>
+                            <th class="p-4">Category</th><th class="p-4">Mode</th><th class="p-4">Amount</th><th class="p-4 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="expenses-table-body"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="vendors" class="tab-content space-y-6">
+            <div class="flex justify-between items-center">
+                <h2 class="text-2xl font-black">Vendor Directory</h2>
+                <button onclick="openVendorModal()" class="btn-primary bg-slate-800 hover:bg-slate-900">+ Add Vendor</button>
+            </div>
+            <div id="vendors-list" class="grid grid-cols-1 md:grid-cols-4 gap-4"></div>
+        </section>
+
+        <section id="event-detail" class="tab-content"></section>
+        <section id="vendor-detail" class="tab-content"></section>
+
+    </main>
+
+    <div id="event-modal" class="modal items-center justify-center p-4">
+        <form onsubmit="handleEventSubmit(event)" class="bg-white dark:bg-[#1E293B] rounded-3xl p-8 w-full max-w-lg shadow-2xl border dark:border-slate-700">
+            <h3 id="event-modal-title" class="text-xl font-bold mb-6">Event Details</h3>
+            <input type="hidden" id="edit-event-id">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="md:col-span-2"><label class="data-label">Client Name</label><input type="text" id="ev-client" required class="w-full bg-transparent border-b border-slate-500/30 py-2 focus:border-orange-500 outline-none font-bold"></div>
+                <div><label class="data-label">Date</label><input type="date" id="ev-date" required class="w-full bg-transparent border-b border-slate-500/30 py-2 outline-none"></div>
+                <div><label class="data-label">Billing (₹)</label><input type="number" id="ev-billing" required class="w-full bg-transparent border-b border-slate-500/30 py-2 font-black text-orange-500 outline-none text-xl"></div>
+                <div class="md:col-span-2"><label class="data-label">Venue</label><input type="text" id="ev-venue" class="w-full bg-transparent border-b border-slate-500/30 py-2 outline-none"></div>
+                <div><label class="data-label">Mobile</label><input type="tel" id="ev-mobile" class="w-full bg-transparent border-b border-slate-500/30 py-2 outline-none"></div>
+            </div>
+            <div class="flex justify-end mt-8 gap-4"><button type="button" onclick="closeModals()" class="font-bold text-slate-500">Cancel</button><button type="submit" class="btn-primary">Save Event</button></div>
+        </form>
+    </div>
+
+    <div id="expense-modal" class="modal items-center justify-center p-4">
+        <form onsubmit="handleExpenseSubmit(event)" class="bg-white dark:bg-[#1E293B] rounded-3xl p-8 w-full max-w-md shadow-2xl">
+            <h3 class="text-xl font-bold mb-6">Record Expense</h3>
+            <input type="hidden" id="edit-expense-id">
+            <div class="space-y-4">
+                <div><label class="data-label">Event</label><select id="ex-event" class="w-full bg-transparent border-b py-2 border-slate-500/30 outline-none font-bold"></select></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label class="data-label">Category</label><select id="ex-cat" onchange="updateHeads('ex-cat', 'ex-head')" class="w-full bg-transparent border-b py-2 border-slate-500/30 outline-none"></select></div>
+                    <div><label class="data-label">Sub-Head</label><select id="ex-head" class="w-full bg-transparent border-b py-2 border-slate-500/30 outline-none font-bold"></select></div>
+                </div>
+                <div><label class="data-label">Amount (₹)</label><input type="number" id="ex-amount" required class="w-full bg-transparent border-b py-2 font-black text-red-500 text-2xl outline-none"></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label class="data-label">Date</label><input type="date" id="ex-date" required class="w-full bg-transparent border-b py-2 border-slate-500/30 outline-none"></div>
+                    <div><label class="data-label">Vendor</label><select id="ex-vendor" class="w-full bg-transparent border-b py-2 border-slate-500/30 outline-none"></select></div>
+                </div>
+            </div>
+            <div class="flex justify-end mt-8 gap-4"><button type="button" onclick="closeModals()" class="text-slate-500">Cancel</button><button type="submit" class="btn-primary">Record</button></div>
+        </form>
+    </div>
+
+    <div id="vendor-modal" class="modal items-center justify-center p-4">
+        <form onsubmit="handleVendorSubmit(event)" class="bg-white dark:bg-[#1E293B] rounded-3xl p-8 w-full max-w-md shadow-2xl">
+            <h3 class="text-xl font-bold mb-6">Vendor Details</h3>
+            <input type="hidden" id="edit-vendor-id">
+            <div class="space-y-4">
+                <div><label class="data-label">Business Name</label><input type="text" id="vn-name" required class="w-full bg-transparent border-b py-2 outline-none font-bold"></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label class="data-label">Category</label><select id="vn-cat" onchange="updateHeads('vn-cat', 'vn-head')" class="w-full bg-transparent border-b py-2 outline-none"></select></div>
+                    <div><label class="data-label">Specialty</label><select id="vn-head" class="w-full bg-transparent border-b py-2 outline-none font-bold"></select></div>
+                </div>
+                <div><label class="data-label">Phone</label><input type="tel" id="vn-phone" class="w-full bg-transparent border-b py-2 outline-none"></div>
+            </div>
+            <div class="flex justify-end mt-8 gap-4"><button type="button" onclick="closeModals()" class="text-slate-500">Cancel</button><button type="submit" class="btn-primary">Save Vendor</button></div>
+        </form>
+    </div>
+
+    <script>
+        // --- DATA & STATE (Preserved from v3.0) ---
+        const DB_KEYS = { EVENTS: 'ff_events_v2', EXPENSES: 'ff_exp_v2', PAYMENTS: 'ff_pay_v2', VENDORS: 'ff_ven_v2', V_PAYMENTS: 'ff_vpay_v2' };
+        const expenseHeadsDB = {
+            "Raw Material": ["Grocery – किराणा", "Other Grocery", "Vegetable – भाजी", "Fruits", "Juice", "Water", "Ice + Milk", "Bread", "Pickle", "Sweet", "Dry Fruits", "Spices", "Oil / Ghee", "Paneer / Dairy"],
+            "Live Counter": ["Chaat", "Starter", "Dosa", "Chinese", "Ice Cream", "Paan Mukhwas", "Counter Setup", "Pav Bhaji", "Pizza", "Dessert", "Beverage"],
+            "Labour": ["Rojiya Labour", "Boys", "Ghati", "Cook", "Helper Staff", "Roti Labour", "Cleaner", "PRO", "Supervisor", "Loading"],
+            "Operations": ["Transport", "Fuel / Diesel", "Gas", "Rented Material", "Disposable", "Packaging", "New Utensils", "Generator", "Water Tanker"],
+            "Admin": ["Royalty", "Office", "Phone", "Printing", "License", "Commission", "Marketing", "Tips", "Misc"],
+            "Adjustment": ["Damage", "Refund", "Staff Advance", "Cash Difference"]
+        };
+
+        let state = {
+            events: JSON.parse(localStorage.getItem(DB_KEYS.EVENTS)) || [],
+            expenses: JSON.parse(localStorage.getItem(DB_KEYS.EXPENSES)) || [],
+            payments: JSON.parse(localStorage.getItem(DB_KEYS.PAYMENTS)) || [],
+            vendors: JSON.parse(localStorage.getItem(DB_KEYS.VENDORS)) || [],
+            vendorPayments: JSON.parse(localStorage.getItem(DB_KEYS.V_PAYMENTS)) || []
+        };
+
+        // --- THEME ENGINE ---
+        function toggleTheme() {
+            const html = document.documentElement;
+            const btn = document.getElementById('theme-toggle-btn');
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                html.classList.add('light');
+                btn.innerText = '☀️';
+                localStorage.setItem('theme', 'light');
+            } else {
+                html.classList.remove('light');
+                html.classList.add('dark');
+                btn.innerText = '🌙';
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        function initTheme() {
+            const saved = localStorage.getItem('theme') || 'dark';
+            document.documentElement.className = saved;
+            document.getElementById('theme-toggle-btn').innerText = saved === 'dark' ? '🌙' : '☀️';
+        }
+
+        // --- CORE UTILS ---
+        function save() {
+            Object.keys(DB_KEYS).forEach(k => {
+                const key = k === 'V_PAYMENTS' ? 'vendorPayments' : k.toLowerCase();
+                localStorage.setItem(DB_KEYS[k], JSON.stringify(state[key]));
+            });
+            renderAll();
+        }
+
+        function switchTab(id) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('sidebar-active'));
+            document.getElementById(id).classList.add('active');
+            document.getElementById('nav-' + id)?.classList.add('sidebar-active');
+            document.getElementById('current-tab-title').innerText = id.charAt(0).toUpperCase() + id.slice(1);
+            renderAll();
+        }
+
+        function showToast(m) { const t = document.getElementById('toast'); document.getElementById('toast-msg').innerText = m; t.style.display = 'flex'; setTimeout(() => t.style.display = 'none', 3000); }
+        function closeModals() { document.querySelectorAll('.modal').forEach(m => m.classList.remove('active')); }
+        function generateID(pre) { return pre + Date.now() + Math.random().toString(36).substr(2, 4); }
+        function updateHeads(catId, subCatId) {
+            const cat = document.getElementById(catId).value;
+            const sub = document.getElementById(subCatId);
+            sub.innerHTML = (expenseHeadsDB[cat] || []).map(h => `<option value="${h}">${h}</option>`).join('');
+        }
+
+        // --- HANDLERS (Business Logic Maintained) ---
+        function handleEventSubmit(e) {
+            e.preventDefault();
+            const id = document.getElementById('edit-event-id').value;
+            const data = { id: id || generateID("EV"), client: document.getElementById('ev-client').value, date: document.getElementById('ev-date').value, mobile: document.getElementById('ev-mobile').value, billing: parseFloat(document.getElementById('ev-billing').value), venue: document.getElementById('ev-venue').value };
+            if(id) state.events = state.events.map(ev => ev.id === id ? data : ev);
+            else state.events.push(data);
+            save(); closeModals(); showToast("Success");
+        }
+
+        function handleExpenseSubmit(e) {
+            e.preventDefault();
+            const id = document.getElementById('edit-expense-id').value;
+            const data = { id: id || generateID("EX"), eventId: document.getElementById('ex-event').value, category: document.getElementById('ex-cat').value, head: document.getElementById('ex-head').value, amount: parseFloat(document.getElementById('ex-amount').value), date: document.getElementById('ex-date').value, vendorId: document.getElementById('ex-vendor').value };
+            if(id) state.expenses = state.expenses.map(x => x.id === id ? data : x);
+            else state.expenses.push(data);
+            save(); closeModals(); showToast("Expense Recorded");
+        }
+
+        function handleVendorSubmit(e) {
+            e.preventDefault();
+            const id = document.getElementById('edit-vendor-id').value;
+            const data = { id: id || generateID("VN"), name: document.getElementById('vn-name').value, category: document.getElementById('vn-cat').value, specialty: document.getElementById('vn-head').value, phone: document.getElementById('vn-phone').value };
+            if(id) state.vendors = state.vendors.map(v => v.id === id ? data : v);
+            else state.vendors.push(data);
+            save(); closeModals(); showToast("Vendor Registry Updated");
+        }
+
+        // --- RENDERERS (UI Upgrade applied) ---
+        function renderDashboard() {
+            const totalBill = state.events.reduce((s, e) => s + e.billing, 0);
+            const totalExp = state.expenses.reduce((s, e) => s + e.amount, 0);
+            const totalRec = state.payments.reduce((s, p) => s + p.amount, 0);
+            const profit = totalBill - totalExp;
+
+            document.getElementById('stats-grid').innerHTML = `
+                <div class="card p-5"><p class="data-label text-slate-500">Portfolio</p><p class="text-xl font-black">₹${totalBill.toLocaleString()}</p></div>
+                <div class="card p-5"><p class="data-label text-red-500">Expenses</p><p class="text-xl font-black text-red-500">₹${totalExp.toLocaleString()}</p></div>
+                <div class="card p-5"><p class="data-label text-green-500">Received</p><p class="text-xl font-black text-green-500">₹${totalRec.toLocaleString()}</p></div>
+                <div class="card p-5 bg-amber-500/5 border-amber-500/20"><p class="data-label text-amber-500">Pending</p><p class="text-xl font-black text-amber-600">₹${(totalBill - totalRec).toLocaleString()}</p></div>
+                <div class="card p-5 bg-orange-600 border-none shadow-orange-500/20 text-white"><p class="data-label text-orange-200">Net Profit</p><p class="text-xl font-black">₹${profit.toLocaleString()}</p></div>
+            `;
+
+            const overdue = state.events.map(ev => {
+                const rec = state.payments.filter(p => p.eventId === ev.id).reduce((s, p) => s + p.amount, 0);
+                return { ...ev, pending: ev.billing - rec };
+            }).filter(e => e.pending > 0).sort((a,b) => b.pending - a.pending);
+
+            document.getElementById('overdue-list').innerHTML = overdue.map(e => `
+                <div class="flex justify-between items-center p-4 bg-slate-500/5 rounded-2xl hover:bg-slate-500/10 cursor-pointer" onclick="showEventDetail('${e.id}')">
+                    <div><p class="font-bold text-sm">${e.client}</p><p class="text-[10px] uppercase font-black text-slate-500">${e.date}</p></div>
+                    <p class="text-lg font-black text-amber-600">₹${e.pending.toLocaleString()}</p>
+                </div>
+            `).join('') || '<p class="text-slate-500 italic text-center py-4">No collections pending.</p>';
+        }
+
+        function renderExpenses() {
+            const list = state.expenses.sort((a,b) => new Date(b.date) - new Date(a.date));
+            document.getElementById('exp-count').innerText = list.length;
+            document.getElementById('exp-total-val').innerText = '₹' + list.reduce((s, x) => s + x.amount, 0).toLocaleString();
+            document.getElementById('expenses-table-body').innerHTML = list.map(ex => {
+                const ev = state.events.find(e => e.id === ex.eventId);
+                const ven = state.vendors.find(v => v.id === ex.vendorId);
+                return `<tr class="table-row">
+                    <td class="p-4 text-[11px] font-mono text-slate-500">${ex.date}</td>
+                    <td class="p-4 font-bold text-sm">${ev?.client || '---'}</td>
+                    <td class="p-4 text-orange-500 font-bold text-xs">${ven?.name || 'Self'}</td>
+                    <td class="p-4 text-[10px] font-black uppercase text-slate-400">${ex.head}</td>
+                    <td class="p-4"><span class="bg-slate-500/10 px-2 py-0.5 rounded text-[9px] font-bold uppercase">${ex.mode || 'Cash'}</span></td>
+                    <td class="p-4 font-black text-red-500">₹${ex.amount.toLocaleString()}</td>
+                    <td class="p-4 text-right"><button onclick="deleteItem('expenses', '${ex.id}')" class="text-slate-400 hover:text-red-500">×</button></td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderEvents() {
+            document.getElementById('events-list').innerHTML = state.events.map(ev => {
+                const rec = state.payments.filter(p => p.eventId === ev.id).reduce((s, p) => s + p.amount, 0);
+                return `<div class="card p-6 hover:border-orange-500 cursor-pointer group" onclick="showEventDetail('${ev.id}')">
+                    <div class="flex justify-between items-start mb-1">
+                        <h3 class="font-black text-lg group-hover:text-orange-500 transition-colors">${ev.client}</h3>
+                        <button onclick="event.stopPropagation(); deleteItem('events', '${ev.id}')" class="text-slate-300">×</button>
+                    </div>
+                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6">${ev.date}</p>
+                    <div class="flex justify-between items-end">
+                        <div><p class="data-label">Pending</p><p class="text-lg font-black text-amber-600">₹${(ev.billing - rec).toLocaleString()}</p></div>
+                        <p class="text-xs font-bold text-slate-500">Total: ₹${ev.billing.toLocaleString()}</p>
+                    </div>
+                </div>`;
+            }).join('') || '<p class="col-span-full py-10 text-center text-slate-400 italic">No events yet.</p>';
+        }
+
+        function renderVendors() {
+            document.getElementById('vendors-list').innerHTML = state.vendors.map(v => {
+                const credit = state.expenses.filter(x => x.vendorId === v.id).reduce((s, x) => s + x.amount, 0);
+                const debit = state.vendorPayments.filter(p => p.vendorId === v.id).reduce((s, p) => s + p.amount, 0);
+                const bal = credit - debit;
+                return `<div class="card p-5 hover:border-orange-500 cursor-pointer" onclick="showVendorDetail('${v.id}')">
+                    <div class="flex justify-between items-start mb-1"><p class="font-black text-lg">${v.name}</p><button onclick="event.stopPropagation(); deleteItem('vendors', '${v.id}')" class="text-slate-300">×</button></div>
+                    <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-4">${v.specialty}</p>
+                    <div class="flex justify-between items-center">
+                        <p class="text-lg font-black ${bal > 0 ? 'text-red-500' : 'text-green-500'}">₹${bal.toLocaleString()}</p>
+                        <span class="data-label">Balance</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // --- MODAL TRIGGERS ---
+        function openEventModal() { document.getElementById('event-modal').classList.add('active'); }
+        function openExpenseModal() {
+            const m = document.getElementById('expense-modal');
+            document.getElementById('ex-event').innerHTML = state.events.map(e => `<option value="${e.id}">${e.client}</option>`).join('');
+            document.getElementById('ex-cat').innerHTML = Object.keys(expenseHeadsDB).map(c => `<option value="${c}">${c}</option>`).join('');
+            updateHeads('ex-cat', 'ex-head');
+            document.getElementById('ex-vendor').innerHTML = `<option value="">Self</option>` + state.vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
+            m.classList.add('active');
+        }
+        function openVendorModal() {
+            const m = document.getElementById('vendor-modal');
+            document.getElementById('vn-cat').innerHTML = Object.keys(expenseHeadsDB).map(c => `<option value="${c}">${c}</option>`).join('');
+            updateHeads('vn-cat', 'vn-head');
+            m.classList.add('active');
+        }
+
+        function deleteItem(type, id) {
+            if(confirm("Delete item?")) { state[type] = state[type].filter(x => x.id !== id); save(); }
+        }
+
+        function renderAll() { renderDashboard(); renderEvents(); renderExpenses(); renderVendors(); }
+
+        // --- INIT ---
+        initTheme();
+        renderAll();
+    </script>
+</body>
+</html>
