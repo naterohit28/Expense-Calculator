@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Flavor Fusion</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html.dark  { --bg:#0F172A; --card:#1E293B; --border:#334155; --text:#F1F5F9; --muted:#94A3B8; }
+html.light { --bg:#F8FAFC; --card:#FFFFFF; --border:#E2E8F0; --text:#0F172A; --muted:#64748B; }
+:root { --accent:#EA580C; --green:#16A34A; --red:#DC2626; --amber:#D97706; --blue:#2563EB; --nav-h:64px; --hdr-h:56px; }
+body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden; -webkit-font-smoothing:antialiased; }
+*{ scrollbar-width:none; } *::-webkit-scrollbar{ display:none; }
+
+.app-header { position:fixed; top:0; left:0; right:0; height:var(--hdr-h); background:var(--bg); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 16px; z-index:100; }
+.logo { font-size:15px; font-weight:700; color:var(--accent); }
+.logo-sub { font-size:11px; font-weight:500; color:var(--muted); margin-left:6px; }
+.icon-btn { width:34px; height:34px; border-radius:8px; border:1px solid var(--border); background:var(--card); display:flex; align-items:center; justify-content:center; font-size:15px; cursor:pointer; }
+.icon-btn:active { opacity:0.6; }
+.hdr-right { display:flex; gap:8px; }
+
+.bottom-nav { position:fixed; bottom:0; left:0; right:0; height:var(--nav-h); background:var(--card); border-top:1px solid var(--border); display:flex; z-index:100; padding-bottom:env(safe-area-inset-bottom); }
+.nav-item { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer; color:var(--muted); font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; transition:color .15s; }
+.nav-item.active { color:var(--accent); }
+.nav-icon { font-size:18px; }
+
+.main { padding-top:calc(var(--hdr-h) + 16px); padding-bottom:calc(var(--nav-h) + 24px); padding-left:16px; padding-right:16px; }
+.tab { display:none; } .tab.active { display:block; }
+
+/* TYPOGRAPHY */
+.lbl { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); }
+.sec-hdr { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); margin:18px 0 10px; }
+.h-lg { font-size:20px; font-weight:700; color:var(--text); }
+.h-md { font-size:15px; font-weight:600; color:var(--text); }
+.h-sm { font-size:13px; font-weight:600; color:var(--text); }
+.n-xl { font-size:24px; font-weight:700; line-height:1; }
+.n-lg { font-size:20px; font-weight:700; line-height:1.1; }
+.n-md { font-size:16px; font-weight:700; }
+.n-sm { font-size:14px; font-weight:600; }
+.b-sm { font-size:12px; font-weight:400; color:var(--muted); }
+.b-md { font-size:13px; font-weight:500; }
+.c-g { color:var(--green); } .c-r { color:var(--red); } .c-a { color:var(--amber); } .c-b { color:var(--blue); } .c-o { color:var(--accent); }
+
+.card { background:var(--card); border:1px solid var(--border); border-radius:16px; }
+
+/* STAT GRID */
+.stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
+.sc { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; }
+.sc.full { grid-column:1/-1; }
+.sc.acc { background:var(--accent); border-color:transparent; }
+.sc.acc .lbl { color:rgba(255,255,255,.72); }
+.sc.acc .n-lg { color:#fff; }
+
+.badge { display:inline-block; font-size:10px; font-weight:600; padding:2px 8px; border-radius:20px; text-transform:uppercase; letter-spacing:.05em; }
+.b-paid    { background:rgba(22,163,74,.12); color:var(--green); }
+.b-partial { background:rgba(215,119,6,.12); color:var(--amber); }
+.b-pending { background:rgba(220,38,38,.10); color:var(--red); }
+
+.prog-wrap { height:4px; background:var(--border); border-radius:2px; margin-top:10px; overflow:hidden; }
+.prog-fill { height:100%; background:var(--green); border-radius:2px; transition:width .4s; }
+
+.ev-card { background:var(--card); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:14px; padding:14px 14px 14px 16px; margin-bottom:10px; cursor:pointer; }
+.ev-card:active { opacity:0.75; }
+
+.exp-row { display:flex; align-items:center; gap:12px; padding:13px 0; border-bottom:1px solid var(--border); }
+.exp-row:last-child { border-bottom:none; }
+.exp-ico { width:36px; height:36px; border-radius:10px; background:rgba(220,38,38,.08); display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0; }
+.exp-inf { flex:1; min-width:0; }
+.exp-nm { font-size:13px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.exp-mt { font-size:11px; color:var(--muted); margin-top:1px; }
+
+.ven-card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
+.ven-card:active { opacity:0.75; }
+
+.od-row { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:var(--card); border:1px solid var(--border); border-radius:12px; margin-bottom:8px; cursor:pointer; }
+.od-row:active { opacity:0.7; }
+
+.fab { position:fixed; right:18px; bottom:calc(var(--nav-h) + 14px); width:50px; height:50px; border-radius:14px; background:var(--accent); border:none; color:#fff; font-size:22px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 6px 20px rgba(234,88,12,.35); transition:transform .15s; z-index:90; }
+.fab:active { transform:scale(0.91); }
+
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:200; backdrop-filter:blur(4px); align-items:flex-end; }
+.modal-overlay.active { display:flex; }
+.modal-sheet { background:var(--card); width:100%; border-radius:20px 20px 0 0; padding:16px 20px calc(24px + env(safe-area-inset-bottom)); max-height:92vh; overflow-y:auto; animation:sUp .22s ease; }
+@keyframes sUp { from{transform:translateY(32px);opacity:0}to{transform:translateY(0);opacity:1} }
+.s-handle { width:32px; height:4px; background:var(--border); border-radius:2px; margin:0 auto 18px; }
+.s-title { font-size:17px; font-weight:700; color:var(--text); margin-bottom:18px; }
+
+.field { margin-bottom:14px; }
+.field label { display:block; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:6px; }
+.field input,.field select { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:11px 13px; color:var(--text); font-family:'Inter',sans-serif; font-size:14px; font-weight:500; outline:none; transition:border-color .15s; appearance:none; }
+html.light .field input, html.light .field select { background:#F8FAFC; }
+.field input:focus,.field select:focus { border-color:var(--accent); }
+.f-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+.btn { width:100%; padding:13px; border-radius:12px; border:none; font-family:'Inter',sans-serif; font-size:14px; font-weight:600; cursor:pointer; transition:opacity .15s; margin-top:6px; display:flex; align-items:center; justify-content:center; gap:6px; }
+.btn:active { opacity:0.75; }
+.btn-o { background:var(--accent); color:#fff; }
+.btn-r { background:var(--red); color:#fff; }
+.btn-g { background:transparent; border:1px solid var(--border); color:var(--muted); }
+.btn-ol { background:transparent; border:1px solid var(--border); color:var(--text); }
+
+.del-btn { width:26px; height:26px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:14px; }
+.del-btn:active { background:rgba(220,38,38,.12); color:var(--red); }
+
+.back-btn { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--accent); background:none; border:none; cursor:pointer; padding:0; margin-bottom:14px; }
+
+.d-hdr { background:var(--accent); border-radius:16px; padding:18px; margin-bottom:16px; color:#fff; }
+.d-nm { font-size:20px; font-weight:700; margin-bottom:3px; }
+.d-mt { font-size:12px; opacity:.75; margin-bottom:14px; }
+.d-stats { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.ds-l { font-size:10px; font-weight:600; opacity:.7; text-transform:uppercase; letter-spacing:.08em; margin-bottom:2px; }
+.ds-v { font-size:16px; font-weight:700; }
+
+.pay-row { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border); }
+.pay-row:last-child { border-bottom:none; }
+
+.qa-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
+.qa-btn { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 12px; cursor:pointer; text-align:center; }
+.qa-btn:active { opacity:0.7; }
+.qa-ic { font-size:20px; margin-bottom:6px; }
+.qa-lb { font-size:12px; font-weight:600; color:var(--text); }
+.qa-p { background:var(--accent); border-color:var(--accent); }
+.qa-p .qa-lb { color:#fff; }
+.qa-d { background:rgba(220,38,38,.08); border-color:rgba(220,38,38,.2); }
+.qa-d .qa-lb { color:var(--red); }
+
+#toast { position:fixed; top:calc(var(--hdr-h)+10px); left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); color:var(--text); padding:9px 18px; border-radius:40px; font-size:13px; font-weight:600; z-index:300; display:none; white-space:nowrap; box-shadow:0 4px 16px rgba(0,0,0,.25); }
+
+.drawer { position:fixed; inset:0; z-index:150; display:none; }
+.drawer.active { display:block; }
+.drawer-bg { position:absolute; inset:0; background:rgba(0,0,0,.45); }
+.drawer-panel { position:absolute; left:0; top:0; bottom:0; width:228px; background:var(--card); border-right:1px solid var(--border); padding:48px 14px 24px; display:flex; flex-direction:column; }
+.d-logo { font-size:15px; font-weight:700; color:var(--accent); margin-bottom:2px; }
+.d-sub { font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:24px; }
+.d-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:10px; margin-bottom:2px; cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); transition:all .15s; }
+.d-item.active { background:rgba(234,88,12,.1); color:var(--accent); }
+
+.empty { text-align:center; padding:48px 20px; }
+.empty-ic { font-size:36px; margin-bottom:10px; }
+.empty-tx { font-size:13px; font-weight:500; color:var(--muted); }
+</style>
+</head>
+<body>
+<div id="toast"></div>
+
+<header class="app-header">
+  <div><span class="logo">Flavor Fusion</span><span class="logo-sub">Business</span></div>
+  <div class="hdr-right">
+    <div class="icon-btn" onclick="toggleTheme()" id="theme-btn">🌙</div>
+    <div class="icon-btn" onclick="toggleDrawer()">☰</div>
+  </div>
+</header>
+
+<div class="drawer" id="drawer">
+  <div class="drawer-bg" onclick="toggleDrawer()"></div>
+  <div class="drawer-panel">
+    <div class="d-logo">Flavor Fusion</div>
+    <div class="d-sub">Control Panel v4.0</div>
+    <div class="d-item active" id="d-dashboard" onclick="switchTab('dashboard');toggleDrawer()">📊 Dashboard</div>
+    <div class="d-item" id="d-events"   onclick="switchTab('events');toggleDrawer()">📅 Events</div>
+    <div class="d-item" id="d-expenses" onclick="switchTab('expenses');toggleDrawer()">💸 Expenses</div>
+    <div class="d-item" id="d-vendors"  onclick="switchTab('vendors');toggleDrawer()">🤝 Vendors</div>
+    <div style="margin-top:auto"><span class="lbl" style="padding:0 12px">Version 4.0 Mobile</span></div>
+  </div>
+</div>
+
+<main class="main">
+  <div id="tab-dashboard" class="tab active">
+    <div class="stat-grid" id="stats-grid"></div>
+    <div class="sec-hdr">Quick Actions</div>
+    <div class="qa-grid">
+      <div class="qa-btn qa-p" onclick="openEventModal()"><div class="qa-ic">📅</div><div class="qa-lb">New Event</div></div>
+      <div class="qa-btn qa-d" onclick="openExpenseModal()"><div class="qa-ic">💸</div><div class="qa-lb">Add Expense</div></div>
+      <div class="qa-btn" onclick="switchTab('events')"><div class="qa-ic">📋</div><div class="qa-lb">All Events</div></div>
+      <div class="qa-btn" onclick="openVendorModal()"><div class="qa-ic">🤝</div><div class="qa-lb">Add Vendor</div></div>
+    </div>
+    <div class="sec-hdr">Overdue Collections</div>
+    <div id="overdue-list"></div>
+  </div>
+
+  <div id="tab-events" class="tab">
+    <div class="sec-hdr" style="margin-top:0">Event Portfolio</div>
+    <div id="events-list"></div>
+  </div>
+
+  <div id="tab-expenses" class="tab">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div class="card" style="padding:14px 16px"><div class="lbl">Total Entries</div><div class="n-lg" style="margin-top:4px" id="exp-count">0</div></div>
+      <div class="card" style="padding:14px 16px"><div class="lbl c-r">Total Outflow</div><div class="n-lg c-r" style="margin-top:4px" id="exp-total">₹0</div></div>
+    </div>
+    <div class="card" style="padding:0 16px" id="expenses-list"></div>
+  </div>
+
+  <div id="tab-vendors" class="tab">
+    <div class="sec-hdr" style="margin-top:0">Vendor Directory</div>
+    <div id="vendors-list"></div>
+  </div>
+
+  <div id="tab-event-detail"  class="tab"></div>
+  <div id="tab-vendor-detail" class="tab"></div>
+</main>
+
+<button class="fab" id="fab" onclick="fabAction()">+</button>
+
+<nav class="bottom-nav">
+  <div class="nav-item active" id="nav-dashboard" onclick="switchTab('dashboard')"><div class="nav-icon">📊</div><span>Home</span></div>
+  <div class="nav-item" id="nav-events"   onclick="switchTab('events')"><div class="nav-icon">📅</div><span>Events</span></div>
+  <div class="nav-item" id="nav-expenses" onclick="switchTab('expenses')"><div class="nav-icon">💸</div><span>Expenses</span></div>
+  <div class="nav-item" id="nav-vendors"  onclick="switchTab('vendors')"><div class="nav-icon">🤝</div><span>Vendors</span></div>
+</nav>
+
+<!-- EVENT MODAL -->
+<div class="modal-overlay" id="event-modal">
+  <div class="modal-sheet">
+    <div class="s-handle"></div>
+    <div class="s-title" id="event-modal-title">New Event</div>
+    <input type="hidden" id="edit-event-id">
+    <div class="field"><label>Client Name</label><input type="text" id="ev-client" placeholder="e.g. Sharma Wedding"></div>
+    <div class="f-row">
+      <div class="field"><label>Date</label><input type="date" id="ev-date"></div>
+      <div class="field"><label>Billing (₹)</label><input type="number" id="ev-billing" placeholder="0"></div>
+    </div>
+    <div class="field"><label>Venue</label><input type="text" id="ev-venue" placeholder="Hall / Location"></div>
+    <div class="field"><label>Mobile</label><input type="tel" id="ev-mobile" placeholder="9876543210"></div>
+    <button class="btn btn-o" onclick="handleEventSubmit()">Save Event</button>
+    <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+  </div>
+</div>
+
+<!-- EXPENSE MODAL -->
+<div class="modal-overlay" id="expense-modal">
+  <div class="modal-sheet">
+    <div class="s-handle"></div>
+    <div class="s-title">Record Expense</div>
+    <input type="hidden" id="edit-expense-id">
+    <div class="field"><label>Event</label><select id="ex-event"></select></div>
+    <div class="f-row">
+      <div class="field"><label>Category</label><select id="ex-cat" onchange="updateHeads('ex-cat','ex-head')"></select></div>
+      <div class="field"><label>Sub-Head</label><select id="ex-head"></select></div>
+    </div>
+    <div class="field"><label>Amount (₹)</label><input type="number" id="ex-amount" placeholder="0"></div>
+    <div class="f-row">
+      <div class="field"><label>Date</label><input type="date" id="ex-date"></div>
+      <div class="field"><label>Vendor</label><select id="ex-vendor"></select></div>
+    </div>
+    <button class="btn btn-r" onclick="handleExpenseSubmit()">Record Expense</button>
+    <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+  </div>
+</div>
+
+<!-- VENDOR MODAL -->
+<div class="modal-overlay" id="vendor-modal">
+  <div class="modal-sheet">
+    <div class="s-handle"></div>
+    <div class="s-title" id="vendor-modal-title">New Vendor</div>
+    <input type="hidden" id="edit-vendor-id">
+    <div class="field"><label>Business Name</label><input type="text" id="vn-name" placeholder="Vendor / Supplier name"></div>
+    <div class="f-row">
+      <div class="field"><label>Category</label><select id="vn-cat" onchange="updateHeads('vn-cat','vn-head')"></select></div>
+      <div class="field"><label>Specialty</label><select id="vn-head"></select></div>
+    </div>
+    <div class="field"><label>Phone</label><input type="tel" id="vn-phone" placeholder="9876543210"></div>
+    <button class="btn btn-o" onclick="handleVendorSubmit()">Save Vendor</button>
+    <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+  </div>
+</div>
+
+<!-- PAYMENT MODAL -->
+<div class="modal-overlay" id="payment-modal">
+  <div class="modal-sheet">
+    <div class="s-handle"></div>
+    <div class="s-title">Add Client Payment</div>
+    <input type="hidden" id="pay-event-id">
+    <div class="field"><label>Amount (₹)</label><input type="number" id="pay-amount" placeholder="0"></div>
+    <div class="f-row">
+      <div class="field"><label>Date</label><input type="date" id="pay-date"></div>
+      <div class="field"><label>Mode</label>
+        <select id="pay-mode"><option>Cash</option><option>UPI</option><option>NEFT</option><option>Cheque</option></select>
+      </div>
+    </div>
+    <div class="field"><label>Note (optional)</label><input type="text" id="pay-note" placeholder="Reference / remark"></div>
+    <button class="btn btn-o" onclick="handlePaymentSubmit()">Add Payment</button>
+    <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+  </div>
+</div>
+
+<script>
+const DB_KEYS={EVENTS:'ff_events_v2',EXPENSES:'ff_exp_v2',PAYMENTS:'ff_pay_v2',VENDORS:'ff_ven_v2',V_PAYMENTS:'ff_vpay_v2'};
+const EHD={"Raw Material":["Grocery – किराणा","Other Grocery","Vegetable – भाजी","Fruits","Juice","Water","Ice + Milk","Bread","Pickle","Sweet","Dry Fruits","Spices","Oil / Ghee","Paneer / Dairy"],"Live Counter":["Chaat","Starter","Dosa","Chinese","Ice Cream","Paan Mukhwas","Counter Setup","Pav Bhaji","Pizza","Dessert","Beverage"],"Labour":["Rojiya Labour","Boys","Ghati","Cook","Helper Staff","Roti Labour","Cleaner","PRO","Supervisor","Loading"],"Operations":["Transport","Fuel / Diesel","Gas","Rented Material","Disposable","Packaging","New Utensils","Generator","Water Tanker"],"Admin":["Royalty","Office","Phone","Printing","License","Commission","Marketing","Tips","Misc"],"Adjustment":["Damage","Refund","Staff Advance","Cash Difference"]};
+const CI={"Raw Material":"🥘","Live Counter":"🍽","Labour":"👷","Operations":"🚚","Admin":"📋","Adjustment":"🔄"};
+let S={events:JSON.parse(localStorage.getItem(DB_KEYS.EVENTS))||[],expenses:JSON.parse(localStorage.getItem(DB_KEYS.EXPENSES))||[],payments:JSON.parse(localStorage.getItem(DB_KEYS.PAYMENTS))||[],vendors:JSON.parse(localStorage.getItem(DB_KEYS.VENDORS))||[],vendorPayments:JSON.parse(localStorage.getItem(DB_KEYS.V_PAYMENTS))||[]};
+let CT='dashboard';
+
+function save(){localStorage.setItem(DB_KEYS.EVENTS,JSON.stringify(S.events));localStorage.setItem(DB_KEYS.EXPENSES,JSON.stringify(S.expenses));localStorage.setItem(DB_KEYS.PAYMENTS,JSON.stringify(S.payments));localStorage.setItem(DB_KEYS.VENDORS,JSON.stringify(S.vendors));localStorage.setItem(DB_KEYS.V_PAYMENTS,JSON.stringify(S.vendorPayments));rc();}
+function uid(p){return p+Date.now()+Math.random().toString(36).substr(2,4);}
+function rs(n){return '₹'+Number(n||0).toLocaleString('en-IN');}
+function showToast(m){const t=document.getElementById('toast');t.textContent='✓  '+m;t.style.display='block';setTimeout(()=>t.style.display='none',2200);}
+function closeModals(){document.querySelectorAll('.modal-overlay').forEach(m=>m.classList.remove('active'));}
+function updateHeads(c,s){const cat=document.getElementById(c).value;document.getElementById(s).innerHTML=(EHD[cat]||[]).map(h=>`<option>${h}</option>`).join('');}
+function toggleDrawer(){document.getElementById('drawer').classList.toggle('active');}
+
+function toggleTheme(){const h=document.documentElement,b=document.getElementById('theme-btn');if(h.classList.contains('dark')){h.classList.replace('dark','light');b.textContent='☀️';localStorage.setItem('theme','light');}else{h.classList.replace('light','dark');b.textContent='🌙';localStorage.setItem('theme','dark');}}
+function initTheme(){const s=localStorage.getItem('theme')||'dark';document.documentElement.className=s;document.getElementById('theme-btn').textContent=s==='dark'?'🌙':'☀️';}
+
+function switchTab(id){document.querySelectorAll('.tab,.nav-item,.d-item').forEach(el=>el.classList.remove('active'));const t=document.getElementById('tab-'+id),n=document.getElementById('nav-'+id),d=document.getElementById('d-'+id);if(t)t.classList.add('active');if(n)n.classList.add('active');if(d)d.classList.add('active');CT=id;document.getElementById('fab').style.display=['event-detail','vendor-detail'].includes(id)?'none':'flex';window.scrollTo(0,0);rc();}
+function fabAction(){if(CT==='expenses')openExpenseModal();else if(CT==='vendors')openVendorModal();else openEventModal();}
+function rc(){if(CT==='dashboard')rDash();else if(CT==='events')rEvents();else if(CT==='expenses')rExp();else if(CT==='vendors')rVen();}
+
+function openEventModal(ev){document.getElementById('edit-event-id').value=ev?ev.id:'';document.getElementById('ev-client').value=ev?ev.client:'';document.getElementById('ev-date').value=ev?ev.date:'';document.getElementById('ev-billing').value=ev?ev.billing:'';document.getElementById('ev-venue').value=ev?ev.venue||'':'';document.getElementById('ev-mobile').value=ev?ev.mobile||'':'';document.getElementById('event-modal-title').textContent=ev?'Edit Event':'New Event';document.getElementById('event-modal').classList.add('active');}
+function openExpenseModal(){document.getElementById('edit-expense-id').value='';document.getElementById('ex-event').innerHTML=S.events.map(e=>`<option value="${e.id}">${e.client}</option>`).join('');document.getElementById('ex-cat').innerHTML=Object.keys(EHD).map(c=>`<option>${c}</option>`).join('');updateHeads('ex-cat','ex-head');document.getElementById('ex-vendor').innerHTML=`<option value="">Self</option>`+S.vendors.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');document.getElementById('ex-amount').value='';document.getElementById('ex-date').value='';document.getElementById('expense-modal').classList.add('active');}
+function openVendorModal(vn){document.getElementById('edit-vendor-id').value=vn?vn.id:'';document.getElementById('vn-name').value=vn?vn.name:'';document.getElementById('vn-phone').value=vn?vn.phone||'':'';document.getElementById('vn-cat').innerHTML=Object.keys(EHD).map(c=>`<option>${c}</option>`).join('');updateHeads('vn-cat','vn-head');if(vn){document.getElementById('vn-cat').value=vn.category;updateHeads('vn-cat','vn-head');document.getElementById('vn-head').value=vn.specialty;}document.getElementById('vendor-modal-title').textContent=vn?'Edit Vendor':'New Vendor';document.getElementById('vendor-modal').classList.add('active');}
+function openPaymentModal(evId){document.getElementById('pay-event-id').value=evId;document.getElementById('pay-amount').value='';document.getElementById('pay-note').value='';document.getElementById('pay-date').value=new Date().toISOString().split('T')[0];document.getElementById('payment-modal').classList.add('active');}
+
+function handleEventSubmit(){const cl=document.getElementById('ev-client').value.trim(),dt=document.getElementById('ev-date').value,bl=parseFloat(document.getElementById('ev-billing').value);if(!cl||!dt||!bl){showToast('Fill required fields');return;}const id=document.getElementById('edit-event-id').value;const d={id:id||uid('EV'),client:cl,date:dt,billing:bl,venue:document.getElementById('ev-venue').value,mobile:document.getElementById('ev-mobile').value};if(id)S.events=S.events.map(e=>e.id===id?d:e);else S.events.push(d);save();closeModals();showToast('Event saved');}
+function handleExpenseSubmit(){const am=parseFloat(document.getElementById('ex-amount').value),dt=document.getElementById('ex-date').value;if(!am||!dt){showToast('Fill required fields');return;}const id=document.getElementById('edit-expense-id').value;const d={id:id||uid('EX'),eventId:document.getElementById('ex-event').value,category:document.getElementById('ex-cat').value,head:document.getElementById('ex-head').value,amount:am,date:dt,vendorId:document.getElementById('ex-vendor').value};if(id)S.expenses=S.expenses.map(x=>x.id===id?d:x);else S.expenses.push(d);save();closeModals();showToast('Expense recorded');}
+function handleVendorSubmit(){const nm=document.getElementById('vn-name').value.trim();if(!nm){showToast('Enter vendor name');return;}const id=document.getElementById('edit-vendor-id').value;const d={id:id||uid('VN'),name:nm,category:document.getElementById('vn-cat').value,specialty:document.getElementById('vn-head').value,phone:document.getElementById('vn-phone').value};if(id)S.vendors=S.vendors.map(v=>v.id===id?d:v);else S.vendors.push(d);save();closeModals();showToast('Vendor saved');}
+function handlePaymentSubmit(){const am=parseFloat(document.getElementById('pay-amount').value),dt=document.getElementById('pay-date').value;if(!am||!dt){showToast('Fill required fields');return;}const evId=document.getElementById('pay-event-id').value;S.payments.push({id:uid('PY'),eventId:evId,amount:am,date:dt,mode:document.getElementById('pay-mode').value,note:document.getElementById('pay-note').value});save();closeModals();showToast('Payment added');if(CT==='event-detail')showEventDetail(evId);}
+
+function deleteItem(type,id,e){if(e)e.stopPropagation();if(!confirm('Delete?'))return;S[type]=S[type].filter(x=>x.id!==id);save();showToast('Deleted');}
+function deletePayment(id,evId){if(!confirm('Delete payment?'))return;S.payments=S.payments.filter(p=>p.id!==id);save();showToast('Payment deleted');if(CT==='event-detail')showEventDetail(evId);}
+
+function rDash(){
+  const tb=S.events.reduce((s,e)=>s+e.billing,0),te=S.expenses.reduce((s,e)=>s+e.amount,0),tr=S.payments.reduce((s,p)=>s+p.amount,0),pr=tb-te,pe=tb-tr;
+  document.getElementById('stats-grid').innerHTML=`
+    <div class="sc"><div class="lbl">Portfolio</div><div class="n-lg" style="margin-top:4px">${rs(tb)}</div></div>
+    <div class="sc"><div class="lbl c-r">Expenses</div><div class="n-lg c-r" style="margin-top:4px">${rs(te)}</div></div>
+    <div class="sc"><div class="lbl c-g">Received</div><div class="n-lg c-g" style="margin-top:4px">${rs(tr)}</div></div>
+    <div class="sc"><div class="lbl c-a">Pending</div><div class="n-lg c-a" style="margin-top:4px">${rs(pe)}</div></div>
+    <div class="sc full acc"><div class="lbl">Net Profit</div><div class="n-lg" style="margin-top:4px">${rs(pr)}</div></div>`;
+  const od=S.events.map(ev=>{const r=S.payments.filter(p=>p.eventId===ev.id).reduce((s,p)=>s+p.amount,0);return{...ev,_p:ev.billing-r};}).filter(e=>e._p>0).sort((a,b)=>b._p-a._p);
+  document.getElementById('overdue-list').innerHTML=od.map(e=>`<div class="od-row" onclick="showEventDetail('${e.id}')"><div><div class="h-sm">${e.client}</div><div class="b-sm" style="margin-top:2px">${e.date}</div></div><div style="text-align:right"><div class="n-md c-a">${rs(e._p)}</div><div class="b-sm">pending</div></div></div>`).join('')||'<div class="empty"><div class="empty-ic">🎉</div><div class="empty-tx">All collections clear!</div></div>';
+}
+
+function rEvents(){
+  const list=[...S.events].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  document.getElementById('events-list').innerHTML=list.map(ev=>{
+    const rec=S.payments.filter(p=>p.eventId===ev.id).reduce((s,p)=>s+p.amount,0),pend=ev.billing-rec,pct=ev.billing>0?Math.min(100,(rec/ev.billing)*100):0;
+    let bc='b-pending',bl='Pending';if(pend<=0){bc='b-paid';bl='Paid';}else if(rec>0){bc='b-partial';bl='Partial';}
+    return `<div class="ev-card" onclick="showEventDetail('${ev.id}')"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="h-md">${ev.client}</div><div class="b-sm" style="margin-top:2px">${ev.date}${ev.venue?' · '+ev.venue:''}</div></div><div style="display:flex;align-items:center;gap:6px"><span class="badge ${bc}">${bl}</span><button class="del-btn" onclick="deleteItem('events','${ev.id}',event)">×</button></div></div><div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:12px"><div><div class="lbl">Pending</div><div class="n-md c-a" style="margin-top:2px">${rs(Math.max(0,pend))}</div></div><div style="text-align:right"><div class="b-sm">Total: ${rs(ev.billing)}</div><div style="font-size:11px;font-weight:600;color:var(--green);margin-top:1px">Rcvd: ${rs(rec)}</div></div></div><div class="prog-wrap"><div class="prog-fill" style="width:${pct}%"></div></div></div>`;
+  }).join('')||'<div class="empty"><div class="empty-ic">📅</div><div class="empty-tx">No events yet. Tap + to add!</div></div>';
+}
+
+function rExp(){
+  const list=[...S.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  document.getElementById('exp-count').textContent=list.length;
+  document.getElementById('exp-total').textContent=rs(list.reduce((s,x)=>s+x.amount,0));
+  document.getElementById('expenses-list').innerHTML=list.map(ex=>{const ev=S.events.find(e=>e.id===ex.eventId),ven=S.vendors.find(v=>v.id===ex.vendorId);return `<div class="exp-row"><div class="exp-ico">${CI[ex.category]||'💸'}</div><div class="exp-inf"><div class="exp-nm">${ex.head}</div><div class="exp-mt">${ev?.client||'—'} · ${ex.date}</div>${ven?`<div style="font-size:11px;font-weight:600;color:var(--blue);margin-top:1px">${ven.name}</div>`:''}</div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div class="n-sm c-r">${rs(ex.amount)}</div><button class="del-btn" onclick="deleteItem('expenses','${ex.id}',event)">×</button></div></div>`;}).join('')||'<div class="empty"><div class="empty-ic">💸</div><div class="empty-tx">No expenses recorded.</div></div>';
+}
+
+function rVen(){
+  document.getElementById('vendors-list').innerHTML=S.vendors.map(v=>{const cr=S.expenses.filter(x=>x.vendorId===v.id).reduce((s,x)=>s+x.amount,0),pd=S.vendorPayments.filter(p=>p.vendorId===v.id).reduce((s,p)=>s+p.amount,0),bl=cr-pd;return `<div class="ven-card" onclick="showVendorDetail('${v.id}')"><div style="flex:1;min-width:0"><div class="h-sm">${v.name}</div><div class="b-sm" style="margin-top:2px">${v.specialty}</div>${v.phone?`<div style="font-size:11px;color:var(--muted);margin-top:3px">📞 ${v.phone}</div>`:''}</div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-left:12px"><div class="n-md" style="color:${bl>0?'var(--red)':'var(--green)'}">${rs(bl)}</div><div class="lbl">Balance</div><button class="del-btn" onclick="deleteItem('vendors','${v.id}',event)">×</button></div></div>`;}).join('')||'<div class="empty"><div class="empty-ic">🤝</div><div class="empty-tx">No vendors yet.</div></div>';
+}
+
+function showEventDetail(id){
+  const ev=S.events.find(e=>e.id===id);if(!ev)return;
+  const pays=[...S.payments.filter(p=>p.eventId===id)].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const exps=S.expenses.filter(x=>x.eventId===id).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rec=pays.reduce((s,p)=>s+p.amount,0),exTot=exps.reduce((s,x)=>s+x.amount,0),pend=ev.billing-rec,pct=ev.billing>0?Math.min(100,(rec/ev.billing)*100):0;
+  document.getElementById('tab-event-detail').innerHTML=`
+    <button class="back-btn" onclick="switchTab('events')">← Events</button>
+    <div class="d-hdr">
+      <div class="d-nm">${ev.client}</div>
+      <div class="d-mt">${ev.date}${ev.venue?' · '+ev.venue:''}${ev.mobile?' · 📞 '+ev.mobile:''}</div>
+      <div class="d-stats">
+        <div><div class="ds-l">Billing</div><div class="ds-v">${rs(ev.billing)}</div></div>
+        <div><div class="ds-l">Received</div><div class="ds-v">${rs(rec)}</div></div>
+        <div><div class="ds-l">Pending</div><div class="ds-v">${rs(Math.max(0,pend))}</div></div>
+      </div>
+      <div style="height:5px;background:rgba(255,255,255,.2);border-radius:3px;margin-top:12px;overflow:hidden"><div style="height:100%;width:${pct}%;background:#fff;border-radius:3px;transition:width .4s"></div></div>
+    </div>
+    <div class="sec-hdr">Client Payments</div>
+    <div class="card" style="padding:0 16px;margin-bottom:12px">
+      ${pays.map(p=>`<div class="pay-row"><div><div class="n-sm">${rs(p.amount)}</div><div class="b-sm">${p.date} · ${p.mode||'Cash'}${p.note?' · '+p.note:''}</div></div><button class="del-btn" onclick="deletePayment('${p.id}','${ev.id}')">×</button></div>`).join('')||'<div style="padding:14px 0;text-align:center" class="b-sm">No payments yet</div>'}
+    </div>
+    <button class="btn btn-o" onclick="openPaymentModal('${ev.id}')" style="margin-bottom:16px">+ Add Payment</button>
+    <div class="sec-hdr">Event Expenses</div>
+    <div class="card" style="padding:0 16px;margin-bottom:12px">
+      ${exps.map(x=>{const ven=S.vendors.find(v=>v.id===x.vendorId);return `<div class="exp-row"><div class="exp-ico">${CI[x.category]||'💸'}</div><div class="exp-inf"><div class="exp-nm">${x.head}</div><div class="exp-mt">${x.date}${ven?' · '+ven.name:''}</div></div><div class="n-sm c-r">${rs(x.amount)}</div></div>`;}).join('')||'<div style="padding:14px 0;text-align:center" class="b-sm">No expenses for this event</div>'}
+    </div>
+    ${exps.length?`<div class="card" style="padding:13px 16px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="h-sm">Total Expenses</div><div class="n-sm c-r">${rs(exTot)}</div></div>`:''}
+    <button class="btn btn-ol" onclick="openEventModal(${JSON.stringify(ev).replace(/"/g,'&quot;')})">Edit Event</button>`;
+  switchTab('event-detail');
+}
+
+function showVendorDetail(id){
+  const vn=S.vendors.find(v=>v.id===id);if(!vn)return;
+  const exps=S.expenses.filter(x=>x.vendorId===id),cr=exps.reduce((s,x)=>s+x.amount,0),pd=S.vendorPayments.filter(p=>p.vendorId===id).reduce((s,p)=>s+p.amount,0),bl=cr-pd;
+  document.getElementById('tab-vendor-detail').innerHTML=`
+    <button class="back-btn" onclick="switchTab('vendors')">← Vendors</button>
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="h-lg" style="margin-bottom:3px">${vn.name}</div>
+      <div class="b-sm" style="margin-bottom:16px">${vn.specialty}${vn.phone?' · 📞 '+vn.phone:''}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center">
+        <div><div class="lbl c-a">Credit</div><div class="n-md c-a" style="margin-top:4px">${rs(cr)}</div></div>
+        <div><div class="lbl c-g">Paid</div><div class="n-md c-g" style="margin-top:4px">${rs(pd)}</div></div>
+        <div><div class="lbl">Balance</div><div class="n-md" style="margin-top:4px;color:${bl>0?'var(--red)':'var(--green)'}">${rs(bl)}</div></div>
+      </div>
+    </div>
+    <div class="sec-hdr">Expenses Assigned</div>
+    <div class="card" style="padding:0 16px;margin-bottom:12px">
+      ${exps.map(x=>{const ev=S.events.find(e=>e.id===x.eventId);return `<div class="exp-row"><div class="exp-ico">${CI[x.category]||'💸'}</div><div class="exp-inf"><div class="exp-nm">${x.head}</div><div class="exp-mt">${x.date}${ev?' · '+ev.client:''}</div></div><div class="n-sm c-r">${rs(x.amount)}</div></div>`;}).join('')||'<div style="padding:14px 0;text-align:center" class="b-sm">No expenses assigned</div>'}
+    </div>
+    <button class="btn btn-ol" onclick="openVendorModal(${JSON.stringify(vn).replace(/"/g,'&quot;')})">Edit Vendor</button>`;
+  switchTab('vendor-detail');
+}
+
+document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o)closeModals();});});
+initTheme();rc();
+</script>
+</body>
+</html>
