@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flavor Fusion — Expense Maintenance</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+<style>
+/* ── TOKENS ──────────────────────────────────────────── */
+html.dark  { --bg:#0F172A; --bg2:#0a1120; --card:#1E293B; --card2:#253347; --border:#334155; --text:#F1F5F9; --muted:#94A3B8; --hover:#2a3f58; }
+html.light { --bg:#F8FAFC; --bg2:#eef2f7; --card:#FFFFFF; --card2:#f1f5f9; --border:#E2E8F0; --text:#0F172A; --muted:#64748B; --hover:#f1f5f9; }
+:root { --accent:#EA580C; --green:#16A34A; --red:#DC2626; --amber:#D97706; --blue:#2563EB; --sidebar:220px; }
+
+/* ── RESET ───────────────────────────────────────────── */
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:'Inter',sans-serif; font-size:13px; background:var(--bg); color:var(--text); min-height:100vh; display:flex; overflow:hidden; -webkit-font-smoothing:antialiased; }
+*{ scrollbar-width:thin; scrollbar-color:var(--border) transparent; }
+*::-webkit-scrollbar{ width:5px; height:5px; }
+*::-webkit-scrollbar-track{ background:transparent; }
+*::-webkit-scrollbar-thumb{ background:var(--border); border-radius:3px; }
+
+/* ── LAYOUT ──────────────────────────────────────────── */
+.sidebar { width:var(--sidebar); min-width:var(--sidebar); height:100vh; background:var(--card); border-right:1px solid var(--border); display:flex; flex-direction:column; position:fixed; left:0; top:0; z-index:50; }
+.content { margin-left:var(--sidebar); flex:1; height:100vh; overflow-y:auto; display:flex; flex-direction:column; }
+
+/* ── SIDEBAR ─────────────────────────────────────────── */
+.sidebar-logo { padding:18px 16px 14px; border-bottom:1px solid var(--border); }
+.logo-name { font-size:14px; font-weight:700; color:var(--accent); }
+.logo-sub { font-size:10px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.08em; margin-top:2px; }
+.sidebar-nav { flex:1; padding:12px 10px; }
+.nav-item { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:500; color:var(--muted); transition:all .15s; margin-bottom:2px; }
+.nav-item:hover { background:var(--hover); color:var(--text); }
+.nav-item.active { background:rgba(234,88,12,.12); color:var(--accent); font-weight:600; }
+.nav-icon { font-size:16px; width:20px; text-align:center; }
+.sidebar-footer { padding:14px 16px; border-top:1px solid var(--border); }
+
+/* ── TOP BAR ─────────────────────────────────────────── */
+.topbar { height:52px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 24px; background:var(--bg); position:sticky; top:0; z-index:40; flex-shrink:0; }
+.topbar-title { font-size:16px; font-weight:700; }
+.topbar-right { display:flex; gap:8px; align-items:center; }
+.tb-btn { height:32px; padding:0 14px; border-radius:7px; border:1px solid var(--border); background:var(--card); color:var(--text); font-family:'Inter',sans-serif; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all .15s; }
+.tb-btn:hover { border-color:var(--accent); color:var(--accent); }
+.tb-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.tb-btn.primary:hover { background:#c2410c; }
+
+/* ── PAGE ────────────────────────────────────────────── */
+.page { display:none; flex:1; padding:24px; }
+.page.active { display:block; }
+
+/* ── DASHBOARD GRID ──────────────────────────────────── */
+.kpi-row { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-bottom:22px; }
+.kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
+.kpi.accent { background:var(--accent); border-color:var(--accent); }
+.kpi.accent .kpi-lbl,.kpi.accent .kpi-val { color:#fff; }
+.kpi-lbl { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:6px; }
+.kpi-val { font-size:22px; font-weight:700; line-height:1; }
+
+.dash-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+.dash-grid .span2 { grid-column:span 2; }
+.panel { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+.panel-hdr { padding:14px 18px 12px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.panel-title { font-size:13px; font-weight:700; }
+.panel-body { padding:0; max-height:320px; overflow-y:auto; }
+
+/* ── TABLES ──────────────────────────────────────────── */
+.tbl { width:100%; border-collapse:collapse; font-size:12px; }
+.tbl th { padding:10px 16px; text-align:left; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); background:var(--bg); border-bottom:1px solid var(--border); white-space:nowrap; }
+.tbl th.r,.tbl td.r { text-align:right; }
+.tbl td { padding:10px 16px; border-bottom:1px solid var(--border); color:var(--text); vertical-align:middle; }
+.tbl tr:last-child td { border-bottom:none; }
+.tbl tbody tr:hover { background:var(--hover); }
+.tbl td.mono { font-family:monospace; font-size:11px; color:var(--muted); }
+
+/* ── FULL PAGE TABLE ─────────────────────────────────── */
+.page-tbl-wrap { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+.page-tbl-hdr { padding:14px 18px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.tbl-scroll { overflow-x:auto; }
+
+/* ── BADGES ──────────────────────────────────────────── */
+.badge { display:inline-block; font-size:10px; font-weight:600; padding:2px 8px; border-radius:20px; text-transform:uppercase; letter-spacing:.04em; }
+.bg { background:rgba(22,163,74,.1); color:var(--green); }
+.br { background:rgba(220,38,38,.1); color:var(--red); }
+.ba { background:rgba(215,119,6,.1); color:var(--amber); }
+.bb { background:rgba(37,99,235,.1); color:var(--blue); }
+
+/* ── NUMBER COLORS ───────────────────────────────────── */
+.cg { color:var(--green); } .cr { color:var(--red); } .ca { color:var(--amber); } .cb { color:var(--blue); } .co { color:var(--accent); }
+.fw7 { font-weight:700; } .fw6 { font-weight:600; }
+
+/* ── PROGRESS ────────────────────────────────────────── */
+.prog { height:4px; background:var(--border); border-radius:2px; overflow:hidden; margin-top:6px; }
+.prog-fill { height:100%; background:var(--green); border-radius:2px; }
+
+/* ── MODAL ───────────────────────────────────────────── */
+.modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:200; backdrop-filter:blur(4px); align-items:center; justify-content:center; }
+.modal-bg.active { display:flex; }
+.modal { background:var(--card); border:1px solid var(--border); border-radius:16px; width:500px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.4); animation:mIn .2s ease; }
+.modal.wide { width:700px; }
+@keyframes mIn { from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1} }
+.modal-hdr { padding:18px 22px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+.modal-title { font-size:16px; font-weight:700; }
+.modal-close { width:28px; height:28px; border-radius:6px; border:none; background:transparent; color:var(--muted); cursor:pointer; font-size:18px; display:flex; align-items:center; justify-content:center; }
+.modal-close:hover { background:var(--hover); color:var(--text); }
+.modal-body { padding:20px 22px; }
+.modal-footer { padding:16px 22px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:10px; }
+
+/* ── FORM ────────────────────────────────────────────── */
+.frow { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+.frow.f3 { grid-template-columns:1fr 1fr 1fr; }
+.frow.f1 { grid-template-columns:1fr; }
+.field { display:flex; flex-direction:column; gap:5px; margin-bottom:14px; }
+.field:last-child { margin-bottom:0; }
+.field label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+.field input,.field select,.field textarea {
+  background:var(--bg); border:1px solid var(--border); border-radius:8px;
+  padding:9px 12px; color:var(--text); font-family:'Inter',sans-serif;
+  font-size:13px; font-weight:500; outline:none; transition:border-color .15s;
+  appearance:none; width:100%;
+}
+html.light .field input,html.light .field select,html.light .field textarea { background:#F8FAFC; }
+.field input:focus,.field select:focus,.field textarea:focus { border-color:var(--accent); }
+.field textarea { resize:vertical; min-height:70px; }
+
+/* ── BUTTONS ─────────────────────────────────────────── */
+.btn { padding:9px 20px; border-radius:8px; border:none; font-family:'Inter',sans-serif; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s; display:inline-flex; align-items:center; gap:6px; }
+.btn:active { transform:scale(.97); }
+.btn-o { background:var(--accent); color:#fff; }
+.btn-o:hover { background:#c2410c; }
+.btn-r { background:var(--red); color:#fff; }
+.btn-r:hover { background:#b91c1c; }
+.btn-g { background:var(--card2); border:1px solid var(--border); color:var(--text); }
+.btn-g:hover { border-color:var(--accent); color:var(--accent); }
+.btn-del { padding:5px 10px; background:transparent; border:1px solid var(--border); border-radius:6px; color:var(--muted); font-size:12px; cursor:pointer; }
+.btn-del:hover { background:rgba(220,38,38,.1); color:var(--red); border-color:var(--red); }
+.btn-edit { padding:5px 10px; background:transparent; border:1px solid var(--border); border-radius:6px; color:var(--muted); font-size:12px; cursor:pointer; }
+.btn-edit:hover { background:rgba(234,88,12,.1); color:var(--accent); border-color:var(--accent); }
+
+/* ── EVENT DETAIL PANEL ──────────────────────────────── */
+.ev-hdr { background:var(--accent); border-radius:12px; padding:20px 22px; margin-bottom:16px; color:#fff; }
+.ev-hdr-name { font-size:20px; font-weight:700; margin-bottom:4px; }
+.ev-hdr-meta { font-size:12px; opacity:.8; margin-bottom:16px; }
+.ev-hdr-stats { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; }
+.ev-stat-lbl { font-size:10px; opacity:.75; text-transform:uppercase; letter-spacing:.08em; font-weight:600; margin-bottom:3px; }
+.ev-stat-val { font-size:18px; font-weight:700; }
+.ev-prog { height:5px; background:rgba(255,255,255,.2); border-radius:3px; margin-top:14px; overflow:hidden; }
+.ev-prog-fill { height:100%; background:#fff; border-radius:3px; }
+
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+.three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:16px; }
+
+/* ── SEARCH ──────────────────────────────────────────── */
+.search-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.search-inp { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; color:var(--text); font-family:'Inter',sans-serif; font-size:12px; outline:none; width:220px; }
+.search-inp:focus { border-color:var(--accent); }
+.filter-sel { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 12px; color:var(--text); font-family:'Inter',sans-serif; font-size:12px; outline:none; appearance:none; cursor:pointer; }
+.filter-sel:focus { border-color:var(--accent); }
+
+/* ── TOAST ───────────────────────────────────────────── */
+#toast { position:fixed; bottom:24px; right:24px; background:var(--card); border:1px solid var(--border); padding:10px 18px; border-radius:10px; font-size:13px; font-weight:600; z-index:500; display:none; box-shadow:0 6px 20px rgba(0,0,0,.25); }
+
+/* ── EMPTY ───────────────────────────────────────────── */
+.empty-row td { text-align:center; padding:32px!important; color:var(--muted); font-style:italic; }
+
+/* ── VENDOR DETAIL ───────────────────────────────────── */
+.vd-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px 22px; margin-bottom:16px; }
+
+/* ── OVERDUE PILL ────────────────────────────────────── */
+.od-row { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-radius:8px; cursor:pointer; transition:background .15s; }
+.od-row:hover { background:var(--hover); }
+</style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<!-- ── SIDEBAR ── -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-name">🍽 Flavor Fusion</div>
+    <div class="logo-sub">Expense Maintenance</div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-item active" id="n-dashboard" onclick="goto('dashboard')"><span class="nav-icon">📊</span> Dashboard</div>
+    <div class="nav-item" id="n-events"    onclick="goto('events')"><span class="nav-icon">📅</span> Events</div>
+    <div class="nav-item" id="n-payments"  onclick="goto('payments')"><span class="nav-icon">💳</span> Client Payments</div>
+    <div class="nav-item" id="n-expenses"  onclick="goto('expenses')"><span class="nav-icon">💸</span> Expenses</div>
+    <div class="nav-item" id="n-vendors"   onclick="goto('vendors')"><span class="nav-icon">🤝</span> Vendors</div>
+    <div class="nav-item" id="n-vpayments" onclick="goto('vpayments')"><span class="nav-icon">🏦</span> Vendor Payments</div>
+  </nav>
+  <div class="sidebar-footer">
+    <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Version 4.0 Desktop</div>
+    <button class="btn btn-g" style="width:100%;justify-content:center;font-size:12px" onclick="toggleTheme()" id="theme-btn">🌙 Dark Mode</button>
+  </div>
+</aside>
+
+<!-- ── MAIN ── -->
+<div class="content">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="topbar-title" id="page-title">Dashboard</div>
+    <div class="topbar-right">
+      <button class="tb-btn" onclick="exportCSV()">⬇ Export CSV</button>
+      <button class="tb-btn primary" id="add-btn" onclick="handleAdd()">+ Add New</button>
+    </div>
+  </div>
+
+  <!-- ── DASHBOARD ── -->
+  <div class="page active" id="page-dashboard">
+    <div class="kpi-row" id="kpi-row"></div>
+    <div class="dash-grid">
+      <!-- Events with pending -->
+      <div class="panel span2">
+        <div class="panel-hdr">
+          <span class="panel-title">📅 Overdue Collections</span>
+          <button class="tb-btn" onclick="goto('events')">View All →</button>
+        </div>
+        <div class="panel-body" id="dash-overdue"></div>
+      </div>
+      <!-- Quick actions -->
+      <div class="panel">
+        <div class="panel-hdr"><span class="panel-title">⚡ Quick Actions</span></div>
+        <div class="panel-body" style="padding:16px;display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-o" style="width:100%;justify-content:center" onclick="goto('events');openEventModal()">📅 New Event</button>
+          <button class="btn btn-r" style="width:100%;justify-content:center" onclick="goto('expenses');openExpenseModal()">💸 Record Expense</button>
+          <button class="btn btn-g" style="width:100%;justify-content:center" onclick="goto('payments');openPaymentModal()">💳 Add Payment</button>
+          <button class="btn btn-g" style="width:100%;justify-content:center" onclick="goto('vendors');openVendorModal()">🤝 Add Vendor</button>
+        </div>
+      </div>
+      <!-- Recent expenses -->
+      <div class="panel span2">
+        <div class="panel-hdr">
+          <span class="panel-title">💸 Recent Expenses</span>
+          <button class="tb-btn" onclick="goto('expenses')">View All →</button>
+        </div>
+        <div class="panel-body">
+          <table class="tbl"><thead><tr><th>Date</th><th>Event</th><th>Head</th><th>Mode</th><th class="r">Amount</th></tr></thead>
+          <tbody id="dash-expenses"></tbody></table>
+        </div>
+      </div>
+      <!-- Payment summary -->
+      <div class="panel">
+        <div class="panel-hdr"><span class="panel-title">💳 Recent Payments</span></div>
+        <div class="panel-body">
+          <table class="tbl"><thead><tr><th>Event</th><th>Date</th><th class="r">Amount</th></tr></thead>
+          <tbody id="dash-payments"></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── EVENTS ── -->
+  <div class="page" id="page-events">
+    <div class="page-tbl-wrap">
+      <div class="page-tbl-hdr">
+        <div class="search-row">
+          <input class="search-inp" placeholder="Search events..." oninput="renderEvents()" id="ev-search">
+          <select class="filter-sel" onchange="renderEvents()" id="ev-filter">
+            <option value="">All Status</option>
+            <option value="paid">Paid</option>
+            <option value="partial">Partial</option>
+            <option value="pending">Pending</option>
+          </select>
+        </div>
+        <button class="btn btn-o" onclick="openEventModal()">+ Add Event</button>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead><tr>
+            <th>Event No</th><th>Date</th><th>Venue</th><th>Type</th><th>Mobile</th>
+            <th class="r">Billing</th><th class="r">Received</th><th class="r">Pending</th>
+            <th>Status</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="events-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── EVENT DETAIL ── -->
+  <div class="page" id="page-event-detail">
+    <button class="btn btn-g" onclick="goto('events')" style="margin-bottom:16px">← Back to Events</button>
+    <div id="ev-detail-content"></div>
+  </div>
+
+  <!-- ── CLIENT PAYMENTS ── -->
+  <div class="page" id="page-payments">
+    <div class="page-tbl-wrap">
+      <div class="page-tbl-hdr">
+        <div class="search-row">
+          <input class="search-inp" placeholder="Search payments..." oninput="renderPayments()" id="pay-search">
+          <select class="filter-sel" onchange="renderPayments()" id="pay-ev-filter">
+            <option value="">All Events</option>
+          </select>
+        </div>
+        <button class="btn btn-o" onclick="openPaymentModal()">+ Add Payment</button>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead><tr>
+            <th>Payment ID</th><th>Event</th><th>Date</th><th>Mode</th><th>Notes</th><th class="r">Amount</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="payments-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── EXPENSES ── -->
+  <div class="page" id="page-expenses">
+    <div class="page-tbl-wrap">
+      <div class="page-tbl-hdr">
+        <div class="search-row">
+          <input class="search-inp" placeholder="Search expenses..." oninput="renderExpenses()" id="exp-search">
+          <select class="filter-sel" onchange="renderExpenses()" id="exp-ev-filter"><option value="">All Events</option></select>
+          <select class="filter-sel" onchange="renderExpenses()" id="exp-cat-filter"><option value="">All Categories</option></select>
+        </div>
+        <button class="btn btn-r" onclick="openExpenseModal()">+ Record Expense</button>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead><tr>
+            <th>Entry Date</th><th>Event</th><th>Venue</th><th>Expense Head</th><th>Category</th>
+            <th>Mode</th><th>Vendor</th><th>Notes</th><th class="r">Amount</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="expenses-tbody"></tbody>
+        </table>
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;align-items:center;gap:6px">
+        <span style="font-size:12px;color:var(--muted);font-weight:600">TOTAL OUTFLOW</span>
+        <span class="fw7 cr" style="font-size:16px" id="exp-total-footer">₹0</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── VENDORS ── -->
+  <div class="page" id="page-vendors">
+    <div class="page-tbl-wrap">
+      <div class="page-tbl-hdr">
+        <input class="search-inp" placeholder="Search vendors..." oninput="renderVendors()" id="ven-search">
+        <button class="btn btn-o" onclick="openVendorModal()">+ Add Vendor</button>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead><tr>
+            <th>Vendor ID</th><th>Vendor Name</th><th>Category</th><th>Phone</th><th>Notes</th>
+            <th class="r">Total Expense</th><th class="r">Total Paid</th><th class="r">Balance</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="vendors-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── VENDOR DETAIL ── -->
+  <div class="page" id="page-vendor-detail">
+    <button class="btn btn-g" onclick="goto('vendors')" style="margin-bottom:16px">← Back to Vendors</button>
+    <div id="ven-detail-content"></div>
+  </div>
+
+  <!-- ── VENDOR PAYMENTS ── -->
+  <div class="page" id="page-vpayments">
+    <div class="page-tbl-wrap">
+      <div class="page-tbl-hdr">
+        <div class="search-row">
+          <input class="search-inp" placeholder="Search vendor payments..." oninput="renderVPayments()" id="vp-search">
+          <select class="filter-sel" onchange="renderVPayments()" id="vp-filter"><option value="">All Vendors</option></select>
+        </div>
+        <button class="btn btn-o" onclick="openVPaymentModal()">+ Add Vendor Payment</button>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead><tr>
+            <th>Payment ID</th><th>Vendor</th><th>Event</th><th>Date</th><th>Mode</th><th>Notes</th><th class="r">Amount</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="vpayments-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end .content -->
+
+<!-- ════════════ MODALS ════════════ -->
+
+<!-- EVENT MODAL -->
+<div class="modal-bg" id="event-modal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title" id="event-modal-title">New Event</div>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-ev-id">
+      <div class="frow">
+        <div class="field"><label>Event Date *</label><input type="date" id="ev-date"></div>
+        <div class="field"><label>Venue *</label><input type="text" id="ev-venue" placeholder="e.g. Dadar, Manav Seva"></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Event Type</label>
+          <select id="ev-type">
+            <option>Wedding</option><option>Reception</option><option>Haldi</option>
+            <option>Birthday</option><option>Corporate</option><option>Other</option>
+          </select>
+        </div>
+        <div class="field"><label>Client Mobile</label><input type="tel" id="ev-mobile" placeholder="91XXXXXXXXXX"></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Total Billing (₹) *</label><input type="number" id="ev-billing" placeholder="0"></div>
+        <div class="field"><label>Event No (auto)</label><input type="text" id="ev-no" placeholder="EV-YYMM-XXXX" readonly style="opacity:.6"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-o" onclick="saveEvent()">Save Event</button>
+    </div>
+  </div>
+</div>
+
+<!-- CLIENT PAYMENT MODAL -->
+<div class="modal-bg" id="payment-modal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title" id="pay-modal-title">Add Client Payment</div>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-pay-id">
+      <div class="field"><label>Event *</label><select id="pay-event"></select></div>
+      <div class="frow">
+        <div class="field"><label>Payment Date *</label><input type="date" id="pay-date"></div>
+        <div class="field"><label>Amount (₹) *</label><input type="number" id="pay-amount" placeholder="0"></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Payment Mode</label>
+          <select id="pay-mode"><option>Cash</option><option>UPI</option><option>NEFT</option><option>Cheque</option><option>Bank</option></select>
+        </div>
+        <div class="field"><label>Notes</label><input type="text" id="pay-notes" placeholder="Reference / Remark"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-o" onclick="savePayment()">Save Payment</button>
+    </div>
+  </div>
+</div>
+
+<!-- EXPENSE MODAL -->
+<div class="modal-bg" id="expense-modal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title" id="exp-modal-title">Record Expense</div>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-exp-id">
+      <div class="frow">
+        <div class="field"><label>Entry Date *</label><input type="date" id="exp-date"></div>
+        <div class="field"><label>Event *</label><select id="exp-event"></select></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Category</label><select id="exp-cat" onchange="updateExpHeads()"></select></div>
+        <div class="field"><label>Expense Head *</label><select id="exp-head"></select></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Amount (₹) *</label><input type="number" id="exp-amount" placeholder="0"></div>
+        <div class="field"><label>Payment Mode</label>
+          <select id="exp-mode"><option>Cash</option><option>UPI</option><option>NEFT</option><option>Cheque</option></select>
+        </div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Vendor</label><select id="exp-vendor"></select></div>
+        <div class="field"><label>Notes</label><input type="text" id="exp-notes" placeholder="Details / Remarks"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-r" onclick="saveExpense()">Record Expense</button>
+    </div>
+  </div>
+</div>
+
+<!-- VENDOR MODAL -->
+<div class="modal-bg" id="vendor-modal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title" id="ven-modal-title">New Vendor</div>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-ven-id">
+      <div class="field"><label>Vendor Name *</label><input type="text" id="ven-name" placeholder="Business / Supplier name"></div>
+      <div class="frow">
+        <div class="field"><label>Category</label><select id="ven-cat"></select></div>
+        <div class="field"><label>Phone</label><input type="tel" id="ven-phone" placeholder="91XXXXXXXXXX"></div>
+      </div>
+      <div class="field"><label>Notes</label><input type="text" id="ven-notes" placeholder="Any notes"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-o" onclick="saveVendor()">Save Vendor</button>
+    </div>
+  </div>
+</div>
+
+<!-- VENDOR PAYMENT MODAL -->
+<div class="modal-bg" id="vpayment-modal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title" id="vp-modal-title">Add Vendor Payment</div>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-vp-id">
+      <div class="frow">
+        <div class="field"><label>Vendor *</label><select id="vp-vendor"></select></div>
+        <div class="field"><label>Event</label><select id="vp-event"></select></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Payment Date *</label><input type="date" id="vp-date"></div>
+        <div class="field"><label>Amount (₹) *</label><input type="number" id="vp-amount" placeholder="0"></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label>Mode</label>
+          <select id="vp-mode"><option>Cash</option><option>UPI</option><option>NEFT</option><option>Cheque</option></select>
+        </div>
+        <div class="field"><label>Notes</label><input type="text" id="vp-notes" placeholder="Reference"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-g" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-o" onclick="saveVPayment()">Save Payment</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════
+   DATA LAYER
+═══════════════════════════════════════════════════════ */
+const KEYS = { EV:'ff_events_v2', CP:'ff_pay_v2', EX:'ff_exp_v2', VN:'ff_ven_v2', VP:'ff_vpay_v2' };
+
+const EXPENSE_HEADS = {
+  "Raw Material":  ["Grocery – किराणा","Other Grocery – इतर किराणा","Vegetable – भाजी","Fruits","Juice","Water","Ice + Milk","Bread","Pickle","Sweet","Dry Fruits","Spices","Oil / Ghee","Paneer / Dairy"],
+  "Live Counter":  ["Chaat","Starter","Dosa","Chinese","Ice Cream","Paan Mukhwas","Counter Setup","Pav Bhaji","Pizza","Dessert","Beverage"],
+  "Labour":        ["Rojiya Labour","Boys","Ghati","Cook","Helper Staff","Roti Labour","Cleaner","PRO","Supervisor","Loading"],
+  "Operations":    ["Transport – वाहतूक","Fuel / Diesel","Gas","Rented Material","Disposable","Packaging","New Utensils","Generator","Water Tanker","Water – पाणी"],
+  "Admin":         ["Royalty","Office","Phone","Printing","License","Commission","Marketing","Tips","Misc"],
+  "Adjustment":    ["Damage","Refund","Staff Advance","Cash Difference"]
+};
+
+let DB = {
+  events:   JSON.parse(localStorage.getItem(KEYS.EV))  || [],
+  payments: JSON.parse(localStorage.getItem(KEYS.CP))  || [],
+  expenses: JSON.parse(localStorage.getItem(KEYS.EX))  || [],
+  vendors:  JSON.parse(localStorage.getItem(KEYS.VN))  || [],
+  vPayments:JSON.parse(localStorage.getItem(KEYS.VP))  || []
+};
+
+// Pre-load data from AppSheet screenshots if localStorage is empty
+(function seedIfEmpty() {
+  if (DB.events.length > 0) return;
+  const evs = [
+    { id:'55edf39a', no:'EV-2602-9e68', date:'2026-02-07', venue:'Christ Church', type:'Reception', mobile:'', billing:352000 },
+    { id:'29ec4d7f', no:'EV-2602-fb97', date:'2026-02-04', venue:'Dadar',         type:'Haldi',     mobile:'', billing:15000  },
+    { id:'f4412317', no:'EV-2603-0f5a', date:'2026-02-05', venue:'Lohar Wadi',    type:'Wedding',   mobile:'918104334307', billing:500000 },
+    { id:'c335c282', no:'EV-2603-1650', date:'2026-02-14', venue:'Manav Seva',    type:'Birthday',  mobile:'918104334307', billing:56000  }
+  ];
+  const pays = [
+    { id:'b01efcb8', eventId:'55edf39a', date:'2026-02-11', amount:327000, mode:'Cash', notes:'' },
+    { id:'1b6707f6', eventId:'55edf39a', date:'2026-02-20', amount:25000,  mode:'Cash', notes:'' },
+    { id:'22b27a5d', eventId:'29ec4d7f', date:'2026-02-20', amount:15000,  mode:'Cash', notes:'a' },
+    { id:'d3f6b20d', eventId:'f4412317', date:'2026-02-01', amount:200000, mode:'Cash', notes:'' },
+    { id:'6c8598b6', eventId:'f4412317', date:'2026-02-05', amount:100000, mode:'UPI',  notes:'' },
+    { id:'09890e1b', eventId:'f4412317', date:'2026-02-05', amount:100000, mode:'Cash', notes:'' },
+    { id:'b62fd4a4', eventId:'f4412317', date:'2026-02-18', amount:50000,  mode:'Cash', notes:'' },
+    { id:'a1cbd955', eventId:'f4412317', date:'2026-02-18', amount:50000,  mode:'UPI',  notes:'' },
+    { id:'c335pay1', eventId:'c335c282', date:'2026-02-14', amount:56000,  mode:'Cash', notes:'' }
+  ];
+  const exps = [
+    { id:'f80e382a', date:'2026-02-07', eventId:'55edf39a', head:'Transport – वाहतूक', category:'Operations', amount:3600,  mode:'Cash', notes:'Tempo fare',                vendorId:'' },
+    { id:'e67e27cb', date:'2026-02-07', eventId:'55edf39a', head:'Water – पाणी',        category:'Operations', amount:5000,  mode:'UPI',  notes:'',                          vendorId:'' },
+    { id:'bbb1d027', date:'2026-02-04', eventId:'29ec4d7f', head:'Bread – ब्रेड',       category:'Raw Material',amount:600,  mode:'Cash', notes:'Chapati 150',               vendorId:'' },
+    { id:'7a44d5b2', date:'2026-02-04', eventId:'29ec4d7f', head:'Transport – वाहतूक', category:'Operations', amount:964,   mode:'UPI',  notes:'tempo from thane to dadar', vendorId:'' },
+    { id:'exp00005', date:'2026-02-04', eventId:'29ec4d7f', head:'Transport – वाहतूक', category:'Operations', amount:1278,  mode:'UPI',  notes:'dadar to thane',            vendorId:'' },
+    { id:'exp00006', date:'2026-02-26', eventId:'29ec4d7f', head:'Commission',           category:'Admin',      amount:10000, mode:'Cash', notes:'Satish Nate for food',     vendorId:'' }
+  ];
+  const vens = [{ id:'5292e26a', name:'Sajid Juice', category:'Live Counter', phone:'', notes:'' }];
+  const vps  = [{ id:'950b615d', vendorId:'5292e26a', eventId:'55edf39a', date:'2026-04-02', amount:15000, mode:'Cash', notes:'' }];
+  DB.events=evs; DB.payments=pays; DB.expenses=exps; DB.vendors=vens; DB.vPayments=vps;
+  persist();
+})();
+
+function persist() {
+  localStorage.setItem(KEYS.EV, JSON.stringify(DB.events));
+  localStorage.setItem(KEYS.CP, JSON.stringify(DB.payments));
+  localStorage.setItem(KEYS.EX, JSON.stringify(DB.expenses));
+  localStorage.setItem(KEYS.VN, JSON.stringify(DB.vendors));
+  localStorage.setItem(KEYS.VP, JSON.stringify(DB.vPayments));
+}
+
+/* ═══════════════════════════════════════════════════════
+   UTILS
+═══════════════════════════════════════════════════════ */
+function uid(p){ return p+Date.now()+Math.random().toString(36).slice(2,5); }
+function rs(n){ return '₹'+(Number(n||0)).toLocaleString('en-IN'); }
+function today(){ return new Date().toISOString().split('T')[0]; }
+function fmtDate(d){ if(!d)return '—'; return new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); }
+
+function toast(msg,color='var(--green)'){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.style.borderLeftColor=color; t.style.display='block';
+  clearTimeout(t._t); t._t=setTimeout(()=>t.style.display='none',2500);
+}
+
+function closeModals(){document.querySelectorAll('.modal-bg').forEach(m=>m.classList.remove('active'));}
+document.querySelectorAll('.modal-bg').forEach(m=>{m.addEventListener('click',e=>{if(e.target===m)closeModals();});});
+
+function eventLabel(id){ const ev=DB.events.find(e=>e.id===id); return ev?`${fmtDate(ev.date)} — ${ev.venue}`:'—'; }
+function eventReceived(id){ return DB.payments.filter(p=>p.eventId===id).reduce((s,p)=>s+p.amount,0); }
+function eventExpenses(id){ return DB.expenses.filter(x=>x.eventId===id).reduce((s,x)=>s+x.amount,0); }
+
+/* ═══════════════════════════════════════════════════════
+   NAVIGATION
+═══════════════════════════════════════════════════════ */
+const PAGE_TITLES = { dashboard:'Dashboard', events:'Events', 'event-detail':'Event Detail', payments:'Client Payments', expenses:'Expenses', vendors:'Vendors', 'vendor-detail':'Vendor Detail', vpayments:'Vendor Payments' };
+const ADD_LABELS  = { dashboard:'Add Event', events:'Add Event', payments:'Add Payment', expenses:'Record Expense', vendors:'Add Vendor', vpayments:'Add Vendor Payment' };
+
+let CT = 'dashboard';
+
+function goto(id) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  const pg=document.getElementById('page-'+id),nv=document.getElementById('n-'+id);
+  if(pg) pg.classList.add('active');
+  if(nv) nv.classList.add('active');
+  document.getElementById('page-title').textContent = PAGE_TITLES[id]||id;
+  const addBtn=document.getElementById('add-btn');
+  addBtn.style.display=['event-detail','vendor-detail'].includes(id)?'none':'flex';
+  addBtn.textContent='+ '+(ADD_LABELS[id]||'Add New');
+  CT=id;
+  renderPage(id);
+  window.scrollTo(0,0);
+}
+
+function handleAdd(){
+  if(CT==='events'||CT==='dashboard') openEventModal();
+  else if(CT==='payments') openPaymentModal();
+  else if(CT==='expenses') openExpenseModal();
+  else if(CT==='vendors') openVendorModal();
+  else if(CT==='vpayments') openVPaymentModal();
+}
+
+function renderPage(id){
+  if(id==='dashboard') renderDashboard();
+  if(id==='events') renderEvents();
+  if(id==='payments') renderPayments();
+  if(id==='expenses') renderExpenses();
+  if(id==='vendors') renderVendors();
+  if(id==='vpayments') renderVPayments();
+}
+
+/* ═══════════════════════════════════════════════════════
+   THEME
+═══════════════════════════════════════════════════════ */
+function toggleTheme(){
+  const h=document.documentElement,b=document.getElementById('theme-btn');
+  if(h.classList.contains('dark')){ h.classList.replace('dark','light'); b.textContent='☀️ Light Mode'; localStorage.setItem('theme','light'); }
+  else { h.classList.replace('light','dark'); b.textContent='🌙 Dark Mode'; localStorage.setItem('theme','dark'); }
+}
+(function(){ const s=localStorage.getItem('theme')||'dark'; document.documentElement.className=s; document.getElementById('theme-btn').textContent=s==='dark'?'🌙 Dark Mode':'☀️ Light Mode'; })();
+
+/* ═══════════════════════════════════════════════════════
+   DASHBOARD
+═══════════════════════════════════════════════════════ */
+function renderDashboard(){
+  const tb=DB.events.reduce((s,e)=>s+e.billing,0);
+  const te=DB.expenses.reduce((s,x)=>s+x.amount,0);
+  const tr=DB.payments.reduce((s,p)=>s+p.amount,0);
+  const pr=tb-te, pe=tb-tr;
+  document.getElementById('kpi-row').innerHTML=`
+    <div class="kpi"><div class="kpi-lbl">Total Portfolio</div><div class="kpi-val">${rs(tb)}</div></div>
+    <div class="kpi"><div class="kpi-lbl" style="color:var(--red)">Total Expenses</div><div class="kpi-val cr">${rs(te)}</div></div>
+    <div class="kpi"><div class="kpi-lbl" style="color:var(--green)">Amount Received</div><div class="kpi-val cg">${rs(tr)}</div></div>
+    <div class="kpi"><div class="kpi-lbl" style="color:var(--amber)">Pending Collection</div><div class="kpi-val ca">${rs(pe)}</div></div>
+    <div class="kpi accent"><div class="kpi-lbl">Net Profit</div><div class="kpi-val">${rs(pr)}</div></div>
+  `;
+  // Overdue
+  const od=[...DB.events].map(ev=>({...ev,_pend:ev.billing-eventReceived(ev.id)})).filter(e=>e._pend>0).sort((a,b)=>b._pend-a._pend);
+  document.getElementById('dash-overdue').innerHTML=od.map(e=>`
+    <div class="od-row" onclick="showEventDetail('${e.id}')">
+      <div>
+        <div class="fw6" style="font-size:13px">${e.venue}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${fmtDate(e.date)} · ${e.type}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="fw7 ca">${rs(e._pend)}</div>
+        <div style="font-size:11px;color:var(--muted)">of ${rs(e.billing)}</div>
+      </div>
+    </div>
+  `).join('')||'<div style="padding:24px;text-align:center;color:var(--muted)">🎉 All collections clear!</div>';
+  // Recent expenses
+  const rex=[...DB.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,8);
+  document.getElementById('dash-expenses').innerHTML=rex.map(x=>{
+    const ev=DB.events.find(e=>e.id===x.eventId);
+    return `<tr><td class="mono">${fmtDate(x.date)}</td><td>${ev?.venue||'—'}</td><td>${x.head}</td><td><span class="badge bb">${x.mode}</span></td><td class="r fw7 cr">${rs(x.amount)}</td></tr>`;
+  }).join('')||'<tr class="empty-row"><td colspan="5">No expenses yet</td></tr>';
+  // Recent payments
+  const rpy=[...DB.payments].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,8);
+  document.getElementById('dash-payments').innerHTML=rpy.map(p=>{
+    return `<tr><td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${eventLabel(p.eventId)}</td><td class="mono">${fmtDate(p.date)}</td><td class="r fw7 cg">${rs(p.amount)}</td></tr>`;
+  }).join('')||'<tr class="empty-row"><td colspan="3">No payments yet</td></tr>';
+}
+
+/* ═══════════════════════════════════════════════════════
+   EVENTS
+═══════════════════════════════════════════════════════ */
+function renderEvents(){
+  const q=(document.getElementById('ev-search')?.value||'').toLowerCase();
+  const sf=document.getElementById('ev-filter')?.value||'';
+  let list=[...DB.events].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  if(q) list=list.filter(e=>e.venue.toLowerCase().includes(q)||e.type.toLowerCase().includes(q)||e.no.toLowerCase().includes(q));
+  if(sf){
+    list=list.filter(ev=>{
+      const rec=eventReceived(ev.id),pend=ev.billing-rec;
+      if(sf==='paid') return pend<=0;
+      if(sf==='partial') return rec>0&&pend>0;
+      if(sf==='pending') return rec===0;
+      return true;
+    });
+  }
+  document.getElementById('events-tbody').innerHTML=list.map(ev=>{
+    const rec=eventReceived(ev.id),pend=ev.billing-rec,pct=ev.billing>0?Math.min(100,(rec/ev.billing)*100):0;
+    let bc='br',bl='Pending'; if(pend<=0){bc='bg';bl='Paid';}else if(rec>0){bc='ba';bl='Partial';}
+    return `<tr style="cursor:pointer" onclick="showEventDetail('${ev.id}')">
+      <td class="mono">${ev.no}</td>
+      <td>${fmtDate(ev.date)}</td>
+      <td class="fw6">${ev.venue}</td>
+      <td>${ev.type}</td>
+      <td class="mono">${ev.mobile||'—'}</td>
+      <td class="r fw7">${rs(ev.billing)}</td>
+      <td class="r fw7 cg">${rs(rec)}</td>
+      <td class="r fw7 ca">${rs(Math.max(0,pend))}</td>
+      <td><span class="badge ${bc}">${bl}</span></td>
+      <td onclick="event.stopPropagation()"><button class="btn-edit" onclick="openEventModal('${ev.id}')">✏</button> <button class="btn-del" onclick="deleteRow('events','${ev.id}')">🗑</button></td>
+    </tr>`;
+  }).join('')||`<tr class="empty-row"><td colspan="10">No events found</td></tr>`;
+}
+
+function showEventDetail(id){
+  const ev=DB.events.find(e=>e.id===id); if(!ev) return;
+  const pays=[...DB.payments.filter(p=>p.eventId===id)].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const exps=[...DB.expenses.filter(x=>x.eventId===id)].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rec=pays.reduce((s,p)=>s+p.amount,0);
+  const exTot=exps.reduce((s,x)=>s+x.amount,0);
+  const pend=ev.billing-rec, pct=ev.billing>0?Math.min(100,(rec/ev.billing)*100):0;
+  const profit=ev.billing-exTot;
+
+  document.getElementById('ev-detail-content').innerHTML=`
+    <div class="ev-hdr">
+      <div class="ev-hdr-name">${fmtDate(ev.date)} — ${ev.venue}</div>
+      <div class="ev-hdr-meta">${ev.no} · ${ev.type}${ev.mobile?' · 📞 '+ev.mobile:''}</div>
+      <div class="ev-hdr-stats">
+        <div><div class="ev-stat-lbl">Total Billing</div><div class="ev-stat-val">${rs(ev.billing)}</div></div>
+        <div><div class="ev-stat-lbl">Amount Received</div><div class="ev-stat-val">${rs(rec)}</div></div>
+        <div><div class="ev-stat-lbl">Pending Amount</div><div class="ev-stat-val">${rs(Math.max(0,pend))}</div></div>
+        <div><div class="ev-stat-lbl">Total Expenses</div><div class="ev-stat-val">${rs(exTot)}</div></div>
+        <div><div class="ev-stat-lbl">Profit</div><div class="ev-stat-val">${rs(profit)}</div></div>
+      </div>
+      <div class="ev-prog"><div class="ev-prog-fill" style="width:${pct}%"></div></div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-hdr">
+          <span class="panel-title">💳 Client Payments</span>
+          <button class="btn btn-o" style="padding:6px 14px;font-size:12px" onclick="openPaymentModal('${ev.id}')">+ Add</button>
+        </div>
+        <div class="panel-body">
+          <table class="tbl"><thead><tr><th>Date</th><th>Mode</th><th>Notes</th><th class="r">Amount</th><th></th></tr></thead>
+          <tbody>${pays.map(p=>`<tr>
+            <td class="mono">${fmtDate(p.date)}</td>
+            <td><span class="badge bb">${p.mode||'Cash'}</span></td>
+            <td style="color:var(--muted)">${p.notes||'—'}</td>
+            <td class="r fw7 cg">${rs(p.amount)}</td>
+            <td><button class="btn-del" onclick="deleteRow('payments','${p.id}','event-detail')">🗑</button></td>
+          </tr>`).join('')||'<tr class="empty-row"><td colspan="5">No payments yet</td></tr>'}</tbody></table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-hdr">
+          <span class="panel-title">💸 Event Expenses</span>
+          <button class="btn btn-r" style="padding:6px 14px;font-size:12px" onclick="openExpenseModal('${ev.id}')">+ Add</button>
+        </div>
+        <div class="panel-body">
+          <table class="tbl"><thead><tr><th>Date</th><th>Head</th><th>Mode</th><th>Notes</th><th class="r">Amount</th></tr></thead>
+          <tbody>${exps.map(x=>`<tr>
+            <td class="mono">${fmtDate(x.date)}</td>
+            <td class="fw6">${x.head}</td>
+            <td><span class="badge bb">${x.mode||'Cash'}</span></td>
+            <td style="color:var(--muted)">${x.notes||'—'}</td>
+            <td class="r fw7 cr">${rs(x.amount)}</td>
+          </tr>`).join('')||'<tr class="empty-row"><td colspan="5">No expenses</td></tr>'}</tbody>
+          ${exps.length?`<tfoot><tr><td colspan="4" style="padding:10px 16px;font-weight:700;font-size:12px">Total</td><td class="r fw7 cr" style="padding:10px 16px">${rs(exTot)}</td></tr></tfoot>`:''}
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+  // Store current event id for refresh
+  document.getElementById('page-event-detail').dataset.evid=id;
+  goto('event-detail');
+}
+
+/* ═══════════════════════════════════════════════════════
+   CLIENT PAYMENTS
+═══════════════════════════════════════════════════════ */
+function renderPayments(){
+  // Populate event filter
+  const fsel=document.getElementById('pay-ev-filter');
+  const curF=fsel.value;
+  fsel.innerHTML='<option value="">All Events</option>'+DB.events.map(e=>`<option value="${e.id}">${fmtDate(e.date)} — ${e.venue}</option>`).join('');
+  if(curF) fsel.value=curF;
+
+  const q=(document.getElementById('pay-search')?.value||'').toLowerCase();
+  const ef=fsel.value;
+  let list=[...DB.payments].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  if(q) list=list.filter(p=>p.mode.toLowerCase().includes(q)||(p.notes||'').toLowerCase().includes(q)||eventLabel(p.eventId).toLowerCase().includes(q));
+  if(ef) list=list.filter(p=>p.eventId===ef);
+  document.getElementById('payments-tbody').innerHTML=list.map(p=>`<tr>
+    <td class="mono">${p.id.slice(0,8)}</td>
+    <td style="cursor:pointer;color:var(--accent)" onclick="showEventDetail('${p.eventId}')">${eventLabel(p.eventId)}</td>
+    <td class="mono">${fmtDate(p.date)}</td>
+    <td><span class="badge bb">${p.mode||'Cash'}</span></td>
+    <td style="color:var(--muted)">${p.notes||'—'}</td>
+    <td class="r fw7 cg">${rs(p.amount)}</td>
+    <td><button class="btn-edit" onclick="openPaymentModal(null,'${p.id}')">✏</button> <button class="btn-del" onclick="deleteRow('payments','${p.id}')">🗑</button></td>
+  </tr>`).join('')||`<tr class="empty-row"><td colspan="7">No payments found</td></tr>`;
+}
+
+/* ═══════════════════════════════════════════════════════
+   EXPENSES
+═══════════════════════════════════════════════════════ */
+function renderExpenses(){
+  // Populate filters
+  const ef=document.getElementById('exp-ev-filter'), cf=document.getElementById('exp-cat-filter');
+  const curEF=ef.value, curCF=cf.value;
+  ef.innerHTML='<option value="">All Events</option>'+DB.events.map(e=>`<option value="${e.id}">${fmtDate(e.date)} — ${e.venue}</option>`).join('');
+  cf.innerHTML='<option value="">All Categories</option>'+Object.keys(EXPENSE_HEADS).map(c=>`<option>${c}</option>`).join('');
+  if(curEF) ef.value=curEF; if(curCF) cf.value=curCF;
+
+  const q=(document.getElementById('exp-search')?.value||'').toLowerCase();
+  let list=[...DB.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  if(q) list=list.filter(x=>x.head.toLowerCase().includes(q)||(x.notes||'').toLowerCase().includes(q));
+  if(ef.value) list=list.filter(x=>x.eventId===ef.value);
+  if(cf.value) list=list.filter(x=>x.category===cf.value);
+
+  const total=list.reduce((s,x)=>s+x.amount,0);
+  document.getElementById('exp-total-footer').textContent=rs(total);
+
+  document.getElementById('expenses-tbody').innerHTML=list.map(x=>{
+    const ev=DB.events.find(e=>e.id===x.eventId);
+    const ven=DB.vendors.find(v=>v.id===x.vendorId);
+    return `<tr>
+      <td class="mono">${fmtDate(x.date)}</td>
+      <td style="cursor:pointer;color:var(--accent)" onclick="showEventDetail('${x.eventId}')">${ev?.venue||'—'}</td>
+      <td style="color:var(--muted)">${ev?fmtDate(ev.date):'—'}</td>
+      <td class="fw6">${x.head}</td>
+      <td><span class="badge bb" style="background:rgba(37,99,235,.08)">${x.category||'—'}</span></td>
+      <td><span class="badge bb">${x.mode||'Cash'}</span></td>
+      <td style="color:var(--blue)">${ven?ven.name:'—'}</td>
+      <td style="color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.notes||'—'}</td>
+      <td class="r fw7 cr">${rs(x.amount)}</td>
+      <td><button class="btn-edit" onclick="openExpenseModal(null,'${x.id}')">✏</button> <button class="btn-del" onclick="deleteRow('expenses','${x.id}')">🗑</button></td>
+    </tr>`;
+  }).join('')||`<tr class="empty-row"><td colspan="10">No expenses found</td></tr>`;
+}
+
+/* ═══════════════════════════════════════════════════════
+   VENDORS
+═══════════════════════════════════════════════════════ */
+function renderVendors(){
+  const q=(document.getElementById('ven-search')?.value||'').toLowerCase();
+  let list=[...DB.vendors].sort((a,b)=>a.name.localeCompare(b.name));
+  if(q) list=list.filter(v=>v.name.toLowerCase().includes(q)||v.category.toLowerCase().includes(q));
+  document.getElementById('vendors-tbody').innerHTML=list.map(v=>{
+    const te=DB.expenses.filter(x=>x.vendorId===v.id).reduce((s,x)=>s+x.amount,0);
+    const tp=DB.vPayments.filter(p=>p.vendorId===v.id).reduce((s,p)=>s+p.amount,0);
+    const bal=te-tp;
+    return `<tr style="cursor:pointer" onclick="showVendorDetail('${v.id}')">
+      <td class="mono">${v.id.slice(0,8)}</td>
+      <td class="fw6 co">${v.name}</td>
+      <td>${v.category}</td>
+      <td class="mono">${v.phone||'—'}</td>
+      <td style="color:var(--muted)">${v.notes||'—'}</td>
+      <td class="r fw7 ca">${rs(te)}</td>
+      <td class="r fw7 cg">${rs(tp)}</td>
+      <td class="r fw7" style="color:${bal>0?'var(--red)':'var(--green)'}">${rs(bal)}</td>
+      <td onclick="event.stopPropagation()"><button class="btn-edit" onclick="openVendorModal('${v.id}')">✏</button> <button class="btn-del" onclick="deleteRow('vendors','${v.id}')">🗑</button></td>
+    </tr>`;
+  }).join('')||`<tr class="empty-row"><td colspan="9">No vendors found</td></tr>`;
+}
+
+function showVendorDetail(id){
+  const vn=DB.vendors.find(v=>v.id===id); if(!vn) return;
+  const exps=DB.expenses.filter(x=>x.vendorId===id);
+  const pays=DB.vPayments.filter(p=>p.vendorId===id);
+  const te=exps.reduce((s,x)=>s+x.amount,0), tp=pays.reduce((s,p)=>s+p.amount,0), bal=te-tp;
+  document.getElementById('ven-detail-content').innerHTML=`
+    <div class="vd-card">
+      <div style="font-size:20px;font-weight:700;margin-bottom:4px">${vn.name}</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px">${vn.category}${vn.phone?' · 📞 '+vn.phone:''}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+        <div><div class="kpi-lbl ca">Total Expense Credit</div><div class="kpi-val ca">${rs(te)}</div></div>
+        <div><div class="kpi-lbl cg">Total Paid</div><div class="kpi-val cg">${rs(tp)}</div></div>
+        <div><div class="kpi-lbl">Balance Payable</div><div class="kpi-val" style="color:${bal>0?'var(--red)':'var(--green)'}">${rs(bal)}</div></div>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-hdr"><span class="panel-title">💸 Expenses Assigned</span></div>
+        <div class="panel-body"><table class="tbl"><thead><tr><th>Date</th><th>Event</th><th>Head</th><th class="r">Amount</th></tr></thead>
+        <tbody>${exps.map(x=>{const ev=DB.events.find(e=>e.id===x.eventId);return`<tr><td class="mono">${fmtDate(x.date)}</td><td>${ev?.venue||'—'}</td><td>${x.head}</td><td class="r fw7 cr">${rs(x.amount)}</td></tr>`;}).join('')||'<tr class="empty-row"><td colspan="4">None</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-hdr">
+          <span class="panel-title">🏦 Vendor Payments</span>
+          <button class="btn btn-o" style="padding:6px 14px;font-size:12px" onclick="openVPaymentModal('${vn.id}')">+ Add</button>
+        </div>
+        <div class="panel-body"><table class="tbl"><thead><tr><th>Date</th><th>Event</th><th>Mode</th><th class="r">Amount</th><th></th></tr></thead>
+        <tbody>${pays.map(p=>{const ev=DB.events.find(e=>e.id===p.eventId);return`<tr><td class="mono">${fmtDate(p.date)}</td><td>${ev?.venue||'—'}</td><td><span class="badge bb">${p.mode}</span></td><td class="r fw7 cg">${rs(p.amount)}</td><td><button class="btn-del" onclick="deleteRow('vPayments','${p.id}','vendor-detail')">🗑</button></td></tr>`;}).join('')||'<tr class="empty-row"><td colspan="5">None</td></tr>'}</tbody></table></div>
+      </div>
+    </div>
+  `;
+  document.getElementById('page-vendor-detail').dataset.vnid=id;
+  goto('vendor-detail');
+}
+
+/* ═══════════════════════════════════════════════════════
+   VENDOR PAYMENTS
+═══════════════════════════════════════════════════════ */
+function renderVPayments(){
+  const vpf=document.getElementById('vp-filter');
+  const cur=vpf.value;
+  vpf.innerHTML='<option value="">All Vendors</option>'+DB.vendors.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');
+  if(cur) vpf.value=cur;
+  const q=(document.getElementById('vp-search')?.value||'').toLowerCase();
+  let list=[...DB.vPayments].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  if(vpf.value) list=list.filter(p=>p.vendorId===vpf.value);
+  if(q) list=list.filter(p=>{ const v=DB.vendors.find(x=>x.id===p.vendorId); return (v?.name||'').toLowerCase().includes(q); });
+  document.getElementById('vpayments-tbody').innerHTML=list.map(p=>{
+    const vn=DB.vendors.find(v=>v.id===p.vendorId), ev=DB.events.find(e=>e.id===p.eventId);
+    return `<tr>
+      <td class="mono">${p.id.slice(0,8)}</td>
+      <td class="fw6 cb">${vn?.name||'—'}</td>
+      <td>${ev?`${fmtDate(ev.date)} — ${ev.venue}`:'—'}</td>
+      <td class="mono">${fmtDate(p.date)}</td>
+      <td><span class="badge bb">${p.mode||'Cash'}</span></td>
+      <td style="color:var(--muted)">${p.notes||'—'}</td>
+      <td class="r fw7 cg">${rs(p.amount)}</td>
+      <td><button class="btn-edit" onclick="openVPaymentModal(null,'${p.id}')">✏</button> <button class="btn-del" onclick="deleteRow('vPayments','${p.id}')">🗑</button></td>
+    </tr>`;
+  }).join('')||`<tr class="empty-row"><td colspan="8">No vendor payments found</td></tr>`;
+}
+
+/* ═══════════════════════════════════════════════════════
+   MODAL OPENERS
+═══════════════════════════════════════════════════════ */
+function openEventModal(id){
+  const ev=id?DB.events.find(e=>e.id===id):null;
+  document.getElementById('edit-ev-id').value=ev?ev.id:'';
+  document.getElementById('ev-date').value=ev?ev.date:'';
+  document.getElementById('ev-venue').value=ev?ev.venue:'';
+  document.getElementById('ev-type').value=ev?ev.type:'Wedding';
+  document.getElementById('ev-mobile').value=ev?ev.mobile:'';
+  document.getElementById('ev-billing').value=ev?ev.billing:'';
+  document.getElementById('ev-no').value=ev?ev.no:'';
+  document.getElementById('event-modal-title').textContent=ev?'Edit Event':'New Event';
+  document.getElementById('event-modal').classList.add('active');
+}
+
+function openPaymentModal(evId, payId){
+  const pay=payId?DB.payments.find(p=>p.id===payId):null;
+  document.getElementById('edit-pay-id').value=pay?pay.id:'';
+  const sel=document.getElementById('pay-event');
+  sel.innerHTML=DB.events.map(e=>`<option value="${e.id}">${fmtDate(e.date)} — ${e.venue}</option>`).join('');
+  if(evId) sel.value=evId;
+  else if(pay) sel.value=pay.eventId;
+  document.getElementById('pay-date').value=pay?pay.date:today();
+  document.getElementById('pay-amount').value=pay?pay.amount:'';
+  document.getElementById('pay-mode').value=pay?pay.mode:'Cash';
+  document.getElementById('pay-notes').value=pay?pay.notes:'';
+  document.getElementById('pay-modal-title').textContent=pay?'Edit Payment':'Add Client Payment';
+  document.getElementById('payment-modal').classList.add('active');
+}
+
+function openExpenseModal(evId, expId){
+  const ex=expId?DB.expenses.find(x=>x.id===expId):null;
+  document.getElementById('edit-exp-id').value=ex?ex.id:'';
+  const esel=document.getElementById('exp-event');
+  esel.innerHTML=DB.events.map(e=>`<option value="${e.id}">${fmtDate(e.date)} — ${e.venue}</option>`).join('');
+  if(evId) esel.value=evId;
+  else if(ex) esel.value=ex.eventId;
+  // categories
+  document.getElementById('exp-cat').innerHTML=Object.keys(EXPENSE_HEADS).map(c=>`<option>${c}</option>`).join('');
+  if(ex) document.getElementById('exp-cat').value=ex.category;
+  updateExpHeads();
+  if(ex) document.getElementById('exp-head').value=ex.head;
+  document.getElementById('exp-date').value=ex?ex.date:today();
+  document.getElementById('exp-amount').value=ex?ex.amount:'';
+  document.getElementById('exp-mode').value=ex?ex.mode:'Cash';
+  document.getElementById('exp-notes').value=ex?ex.notes:'';
+  const vsel=document.getElementById('exp-vendor');
+  vsel.innerHTML=`<option value="">None / Self</option>`+DB.vendors.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');
+  if(ex&&ex.vendorId) vsel.value=ex.vendorId;
+  document.getElementById('exp-modal-title').textContent=ex?'Edit Expense':'Record Expense';
+  document.getElementById('expense-modal').classList.add('active');
+}
+
+function openVendorModal(id){
+  const vn=id?DB.vendors.find(v=>v.id===id):null;
+  document.getElementById('edit-ven-id').value=vn?vn.id:'';
+  document.getElementById('ven-name').value=vn?vn.name:'';
+  document.getElementById('ven-cat').innerHTML=Object.keys(EXPENSE_HEADS).map(c=>`<option>${c}</option>`).join('');
+  if(vn) document.getElementById('ven-cat').value=vn.category;
+  document.getElementById('ven-phone').value=vn?vn.phone:'';
+  document.getElementById('ven-notes').value=vn?vn.notes:'';
+  document.getElementById('ven-modal-title').textContent=vn?'Edit Vendor':'New Vendor';
+  document.getElementById('vendor-modal').classList.add('active');
+}
+
+function openVPaymentModal(vnId, vpId){
+  const vp=vpId?DB.vPayments.find(p=>p.id===vpId):null;
+  document.getElementById('edit-vp-id').value=vp?vp.id:'';
+  const vsel=document.getElementById('vp-vendor');
+  vsel.innerHTML=DB.vendors.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');
+  if(vnId) vsel.value=vnId;
+  else if(vp) vsel.value=vp.vendorId;
+  const esel=document.getElementById('vp-event');
+  esel.innerHTML=`<option value="">— No Event —</option>`+DB.events.map(e=>`<option value="${e.id}">${fmtDate(e.date)} — ${e.venue}</option>`).join('');
+  if(vp&&vp.eventId) esel.value=vp.eventId;
+  document.getElementById('vp-date').value=vp?vp.date:today();
+  document.getElementById('vp-amount').value=vp?vp.amount:'';
+  document.getElementById('vp-mode').value=vp?vp.mode:'Cash';
+  document.getElementById('vp-notes').value=vp?vp.notes:'';
+  document.getElementById('vp-modal-title').textContent=vp?'Edit Vendor Payment':'Add Vendor Payment';
+  document.getElementById('vpayment-modal').classList.add('active');
+}
+
+function updateExpHeads(){
+  const cat=document.getElementById('exp-cat').value;
+  document.getElementById('exp-head').innerHTML=(EXPENSE_HEADS[cat]||[]).map(h=>`<option>${h}</option>`).join('');
+}
+
+/* ═══════════════════════════════════════════════════════
+   SAVERS
+═══════════════════════════════════════════════════════ */
+function genEvNo(){
+  const d=new Date(),y=String(d.getFullYear()).slice(2),m=String(d.getMonth()+1).padStart(2,'0');
+  const suffix=Math.random().toString(36).slice(2,6);
+  return `EV-${y}${m}-${suffix}`;
+}
+
+function saveEvent(){
+  const dt=document.getElementById('ev-date').value,vn=document.getElementById('ev-venue').value.trim(),bl=parseFloat(document.getElementById('ev-billing').value);
+  if(!dt||!vn||!bl){toast('Fill required fields','var(--red)');return;}
+  const id=document.getElementById('edit-ev-id').value;
+  const d={id:id||uid('ev'),no:document.getElementById('ev-no').value||genEvNo(),date:dt,venue:vn,type:document.getElementById('ev-type').value,mobile:document.getElementById('ev-mobile').value,billing:bl};
+  if(!d.no) d.no=genEvNo();
+  if(id) DB.events=DB.events.map(e=>e.id===id?d:e);
+  else DB.events.push(d);
+  persist(); closeModals(); toast('Event saved'); renderPage(CT);
+}
+
+function savePayment(){
+  const am=parseFloat(document.getElementById('pay-amount').value),dt=document.getElementById('pay-date').value;
+  if(!am||!dt){toast('Fill required fields','var(--red)');return;}
+  const id=document.getElementById('edit-pay-id').value;
+  const d={id:id||uid('PY'),eventId:document.getElementById('pay-event').value,date:dt,amount:am,mode:document.getElementById('pay-mode').value,notes:document.getElementById('pay-notes').value};
+  if(id) DB.payments=DB.payments.map(p=>p.id===id?d:p);
+  else DB.payments.push(d);
+  persist(); closeModals(); toast('Payment saved'); renderPage(CT);
+  if(CT==='event-detail'){ const eid=document.getElementById('page-event-detail').dataset.evid; if(eid) showEventDetail(eid); }
+}
+
+function saveExpense(){
+  const am=parseFloat(document.getElementById('exp-amount').value),dt=document.getElementById('exp-date').value;
+  if(!am||!dt){toast('Fill required fields','var(--red)');return;}
+  const id=document.getElementById('edit-exp-id').value;
+  const d={id:id||uid('EX'),date:dt,eventId:document.getElementById('exp-event').value,category:document.getElementById('exp-cat').value,head:document.getElementById('exp-head').value,amount:am,mode:document.getElementById('exp-mode').value,notes:document.getElementById('exp-notes').value,vendorId:document.getElementById('exp-vendor').value};
+  if(id) DB.expenses=DB.expenses.map(x=>x.id===id?d:x);
+  else DB.expenses.push(d);
+  persist(); closeModals(); toast('Expense recorded','var(--red)'); renderPage(CT);
+  if(CT==='event-detail'){ const eid=document.getElementById('page-event-detail').dataset.evid; if(eid) showEventDetail(eid); }
+}
+
+function saveVendor(){
+  const nm=document.getElementById('ven-name').value.trim();
+  if(!nm){toast('Enter vendor name','var(--red)');return;}
+  const id=document.getElementById('edit-ven-id').value;
+  const d={id:id||uid('VN'),name:nm,category:document.getElementById('ven-cat').value,phone:document.getElementById('ven-phone').value,notes:document.getElementById('ven-notes').value};
+  if(id) DB.vendors=DB.vendors.map(v=>v.id===id?d:v);
+  else DB.vendors.push(d);
+  persist(); closeModals(); toast('Vendor saved'); renderPage(CT);
+}
+
+function saveVPayment(){
+  const am=parseFloat(document.getElementById('vp-amount').value),dt=document.getElementById('vp-date').value;
+  if(!am||!dt){toast('Fill required fields','var(--red)');return;}
+  const id=document.getElementById('edit-vp-id').value;
+  const d={id:id||uid('VP'),vendorId:document.getElementById('vp-vendor').value,eventId:document.getElementById('vp-event').value,date:dt,amount:am,mode:document.getElementById('vp-mode').value,notes:document.getElementById('vp-notes').value};
+  if(id) DB.vPayments=DB.vPayments.map(p=>p.id===id?d:p);
+  else DB.vPayments.push(d);
+  persist(); closeModals(); toast('Vendor payment saved'); renderPage(CT);
+  if(CT==='vendor-detail'){ const vid=document.getElementById('page-vendor-detail').dataset.vnid; if(vid) showVendorDetail(vid); }
+}
+
+/* ═══════════════════════════════════════════════════════
+   DELETE
+═══════════════════════════════════════════════════════ */
+function deleteRow(type, id, refreshDetail){
+  if(!confirm('Delete this record? This cannot be undone.')) return;
+  DB[type]=DB[type].filter(x=>x.id!==id);
+  persist(); toast('Deleted','var(--amber)');
+  if(refreshDetail==='event-detail'){ const eid=document.getElementById('page-event-detail').dataset.evid; if(eid){showEventDetail(eid);return;} }
+  if(refreshDetail==='vendor-detail'){ const vid=document.getElementById('page-vendor-detail').dataset.vnid; if(vid){showVendorDetail(vid);return;} }
+  renderPage(CT);
+}
+
+/* ═══════════════════════════════════════════════════════
+   EXPORT CSV
+═══════════════════════════════════════════════════════ */
+function exportCSV(){
+  const maps = {
+    dashboard:  null,
+    events:     { data: DB.events,    headers: ['Event No','Date','Venue','Type','Mobile','Billing','Received','Pending'], row: e=>{ const r=eventReceived(e.id); return [e.no,e.date,e.venue,e.type,e.mobile,e.billing,r,e.billing-r]; }},
+    payments:   { data: DB.payments,  headers: ['ID','Event','Date','Amount','Mode','Notes'], row: p=>[p.id,eventLabel(p.eventId),p.date,p.amount,p.mode,p.notes||''] },
+    expenses:   { data: DB.expenses,  headers: ['Date','Event','Category','Head','Amount','Mode','Vendor','Notes'], row: x=>{ const ev=DB.events.find(e=>e.id===x.eventId),vn=DB.vendors.find(v=>v.id===x.vendorId); return [x.date,ev?.venue||'',x.category,x.head,x.amount,x.mode,vn?.name||'',x.notes||'']; }},
+    vendors:    { data: DB.vendors,   headers: ['Name','Category','Phone','Notes'], row: v=>[v.name,v.category,v.phone||'',v.notes||''] },
+    vpayments:  { data: DB.vPayments, headers: ['Vendor','Event','Date','Amount','Mode','Notes'], row: p=>{ const vn=DB.vendors.find(v=>v.id===p.vendorId),ev=DB.events.find(e=>e.id===p.eventId); return [vn?.name||'',ev?.venue||'',p.date,p.amount,p.mode,p.notes||'']; }}
+  };
+  const m=maps[CT]; if(!m){toast('No data to export','var(--amber)');return;}
+  const rows=[m.headers,...m.data.map(m.row)];
+  const csv=rows.map(r=>r.map(c=>'"'+(String(c||'').replace(/"/g,'""'))+'"').join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);
+  a.download=`flavor-fusion-${CT}-${today()}.csv`;
+  a.click(); toast('CSV exported');
+}
+
+/* ── BOOT ── */
+renderDashboard();
+</script>
+</body>
+</html>
