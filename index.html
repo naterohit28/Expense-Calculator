@@ -1,0 +1,12 @@
+<script>
+  const params = new URLSearchParams(window.location.search);
+
+  if (params.get("view") === "mobile") {
+    window.location.href = "/FFmobile.html";
+  } else if (params.get("view") === "desktop") {
+    window.location.href = "/FFexp.html";
+  } else {
+    const isMobile = /iPhone|Android|iPad|iPod/i.test(navigator.userAgent);
+    window.location.href = isMobile ? "/FFmobile.html" : "/FFexp.html";
+  }
+</script>
