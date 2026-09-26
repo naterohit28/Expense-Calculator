@@ -1,25 +1,340 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" class="dark">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#EA580C">
-  <title>Flavor Fusion</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#EA580C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Flavor Fusion">
+<meta name="description" content="Flavor Fusion Business Operating System — private, offline-first">
+<title>Flavor Fusion</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<script>
-  const params = new URLSearchParams(window.location.search);
 
-  if (params.get("view") === "mobile") {
-    window.location.href = "FFmobile.html";
-  } else if (params.get("view") === "desktop") {
-    window.location.href = "FFexp.html";
-  } else {
-    const isMobile = /iPhone|Android|iPad|iPod/i.test(navigator.userAgent);
-    window.location.href = isMobile ? "FFmobile.html" : "FFexp.html";
+<!-- ── TOAST ── -->
+<div id="toast"></div>
+
+<!-- ── LOADING OVERLAY ── -->
+<div id="loading">
+  <div class="spinner"></div>
+  <div style="font-size:13px;font-weight:600;color:var(--muted)">Loading – लोड होत आहे...</div>
+</div>
+
+<!-- ── PIN LOCK SCREEN ── -->
+<div id="pin-screen">
+  <div class="pin-logo">🍽</div>
+  <div class="pin-title" id="pin-title">Enter PIN – पिन टाका</div>
+  <div class="pin-sub"  id="pin-sub">Enter your 4-digit PIN</div>
+  <div class="pin-dots">
+    <div class="pin-dot"></div>
+    <div class="pin-dot"></div>
+    <div class="pin-dot"></div>
+    <div class="pin-dot"></div>
+  </div>
+  <div class="pin-error" id="pin-error"></div>
+  <div class="pin-pad">
+    <button class="pin-key" data-val="1">1</button>
+    <button class="pin-key" data-val="2">2</button>
+    <button class="pin-key" data-val="3">3</button>
+    <button class="pin-key" data-val="4">4</button>
+    <button class="pin-key" data-val="5">5</button>
+    <button class="pin-key" data-val="6">6</button>
+    <button class="pin-key" data-val="7">7</button>
+    <button class="pin-key" data-val="8">8</button>
+    <button class="pin-key" data-val="9">9</button>
+    <button class="pin-key" data-val="del" style="grid-column:1">⌫</button>
+    <button class="pin-key" data-val="0">0</button>
+    <button class="pin-key accent" data-val="ok" style="grid-column:3">OK</button>
+  </div>
+  <div class="pin-alt" id="pin-alt">Forgot PIN? – पिन विसरलात?</div>
+</div>
+
+<!-- ── HEADER ── -->
+<header class="hdr">
+  <div>
+    <span class="logo">🍽 Flavor Fusion</span>
+    <span class="logo-sub">v2 · व्यवसाय</span>
+  </div>
+  <div class="hdr-right">
+    <div class="icon-btn" id="theme-btn">🌙</div>
+    <div class="icon-btn" id="drawer-toggle">☰</div>
+  </div>
+</header>
+
+<!-- ── DRAWER ── -->
+<div class="drawer" id="drawer">
+  <div class="drawer-bg" id="drawer-bg"></div>
+  <div class="drawer-panel">
+    <div class="d-logo">Flavor Fusion</div>
+    <div class="d-sub">Business App v2 – व्यवसाय अ‍ॅप</div>
+
+    <div class="d-item active" id="d-home">📊 Dashboard – मुख्यपृष्ठ</div>
+    <div class="d-item" id="d-events">📅 Events – कार्यक्रम</div>
+    <div class="d-item" id="d-expenses">💸 Expenses – खर्च</div>
+    <div class="d-item" id="d-vendors">🤝 Vendors – विक्रेते</div>
+    <div class="d-item" id="d-summary">📈 Reports – अहवाल</div>
+
+    <div style="border-top:1px solid var(--border);margin:12px 0 8px;padding-top:8px">
+      <div class="lbl" style="padding:0 12px 6px">Classic Versions – जुनी आवृत्ती</div>
+      <a href="FFexp.html" class="d-item" style="text-decoration:none">🖥 Classic Desktop (FFexp)</a>
+      <a href="FFmobile.html" class="d-item" style="text-decoration:none">📱 Classic Mobile (FFmobile)</a>
+    </div>
+
+    <div class="d-ver">
+      <button class="drawer-action-btn" id="btn-export">⬇ Export – निर्यात</button>
+      <button class="drawer-action-btn" id="btn-import">⬆ Import – आयात</button>
+      <button class="drawer-action-btn" id="btn-set-pin">🔒 Set PIN – पिन सेट करा</button>
+      <button class="drawer-action-btn" id="btn-remove-pin" style="color:var(--red);border-color:rgba(220,38,38,.3)">🔓 Remove PIN – पिन काढा</button>
+      <div class="lbl" style="padding:8px 0 0">Private – फक्त माझा डेटा · v2.0</div>
+    </div>
+  </div>
+</div>
+<input type="file" id="import-input" accept=".json" style="display:none">
+<input type="file" id="photo-input" accept="image/*" multiple style="display:none">
+
+<!-- ── MAIN ── -->
+<main class="main">
+
+  <!-- HOME -->
+  <div id="tab-home" class="tab active">
+    <div class="stat-grid" id="kpi"></div>
+    <div id="insights-wrap" style="margin-bottom:16px;display:none"></div>
+    <div class="sec">Quick Actions – जलद क्रिया</div>
+    <div class="qa-grid">
+      <div class="qa qa-p" data-action="go" id="qa-newevent" onclick="document.getElementById('tab-home').dispatchEvent(new CustomEvent('qa-event'))">
+        <div class="qa-ic">📅</div><div class="qa-lb">New Event – नवीन कार्यक्रम</div>
+      </div>
+      <div class="qa qa-r" onclick="document.getElementById('n-expenses').click();setTimeout(()=>document.getElementById('fab').click(),50)">
+        <div class="qa-ic">💸</div><div class="qa-lb">Add Expense – खर्च जोडा</div>
+      </div>
+      <div class="qa" data-action="go" data-id="events">
+        <div class="qa-ic">📋</div><div class="qa-lb">All Events – सर्व कार्यक्रम</div>
+      </div>
+      <div class="qa" data-action="go" data-id="vendors" onclick="document.getElementById('n-vendors').click()">
+        <div class="qa-ic">🤝</div><div class="qa-lb">Add Vendor – विक्रेता जोडा</div>
+      </div>
+    </div>
+    <div class="sec">Overdue Collections – थकीत वसुली</div>
+    <div id="od-list"></div>
+  </div>
+
+  <!-- EVENTS -->
+  <div id="tab-events" class="tab">
+    <div class="sec" style="margin-top:0">Event Portfolio – कार्यक्रम यादी</div>
+    <div id="ev-list"></div>
+  </div>
+
+  <!-- EVENT DETAIL -->
+  <div id="tab-evdetail" class="tab"></div>
+
+  <!-- EXPENSES -->
+  <div id="tab-expenses" class="tab">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div class="card" style="padding:14px">
+        <div class="lbl">Entries – नोंदी</div>
+        <div class="n-lg" style="margin-top:4px" id="exp-ct">0</div>
+      </div>
+      <div class="card" style="padding:14px">
+        <div class="lbl cr">Total Out – एकूण खर्च</div>
+        <div class="n-lg cr" style="margin-top:4px" id="exp-tot">₹0</div>
+      </div>
+    </div>
+    <div class="card" style="padding:0 16px" id="exp-list"></div>
+  </div>
+
+  <!-- VENDORS -->
+  <div id="tab-vendors" class="tab">
+    <div class="sec" style="margin-top:0">Vendor Directory – विक्रेता यादी</div>
+    <div id="ven-list"></div>
+  </div>
+
+  <!-- VENDOR DETAIL -->
+  <div id="tab-vendetail" class="tab"></div>
+
+  <!-- SUMMARY -->
+  <div id="tab-summary" class="tab">
+    <div class="sec" style="margin-top:0">Business Reports – व्यवसाय अहवाल</div>
+    <div id="summary-content"></div>
+  </div>
+
+</main>
+
+<!-- FAB -->
+<button class="fab" id="fab">+</button>
+
+<!-- ── BOTTOM NAV ── -->
+<nav class="bot-nav">
+  <div class="nav-it active" id="n-home">    <div class="nav-ic">📊</div><span>Home – घर</span></div>
+  <div class="nav-it"        id="n-events">  <div class="nav-ic">📅</div><span>Events – कार्यक्रम</span></div>
+  <div class="nav-it"        id="n-expenses"><div class="nav-ic">💸</div><span>Expenses – खर्च</span></div>
+  <div class="nav-it"        id="n-vendors"> <div class="nav-ic">🤝</div><span>Vendors – विक्रेते</span></div>
+  <div class="nav-it"        id="n-summary"> <div class="nav-ic">📈</div><span>Reports – अहवाल</span></div>
+</nav>
+
+<!-- ═══════════ MODALS ═══════════ -->
+
+<!-- EVENT MODAL -->
+<div class="modal-ov" id="ev-modal">
+  <div class="sheet">
+    <div class="s-handle"></div>
+    <div class="s-title" id="ev-mtitle">New Event – नवीन कार्यक्रम</div>
+    <input type="hidden" id="ev-id">
+    <div class="field">
+      <label>Client / Event Name – नाव *</label>
+      <input type="text" id="ev-name" placeholder="e.g. Sharma Wedding">
+    </div>
+    <div class="f2">
+      <div class="field"><label>Date – दिनांक *</label><input type="date" id="ev-date"></div>
+      <div class="field"><label>Type – प्रकार</label><select id="ev-type"></select></div>
+    </div>
+    <div class="field"><label>Venue – ठिकाण *</label><input type="text" id="ev-venue" placeholder="Hall / Location"></div>
+    <div class="f2">
+      <div class="field"><label>Total Billing – एकूण बिल (₹) *</label><input type="number" id="ev-billing" placeholder="0" min="1"></div>
+      <div class="field"><label>Client Mobile – मोबाईल</label><input type="tel" id="ev-mobile" placeholder="9XXXXXXXXX"></div>
+    </div>
+    <div class="field"><label>Notes – नोंदी</label><textarea id="ev-notes" placeholder="Any notes about this event..."></textarea></div>
+    <button class="btn btn-o" id="btn-save-event">Save – जतन करा</button>
+    <button class="btn btn-g" onclick="document.querySelectorAll('.modal-ov').forEach(m=>m.classList.remove('active'))">Cancel – रद्द करा</button>
+  </div>
+</div>
+
+<!-- EXPENSE MODAL -->
+<div class="modal-ov" id="exp-modal">
+  <div class="sheet">
+    <div class="s-handle"></div>
+    <div class="s-title" id="exp-mtitle">Record Expense – खर्च नोंदवा</div>
+    <input type="hidden" id="exp-id">
+    <div class="field"><label>Event – कार्यक्रम *</label><select id="exp-ev"></select></div>
+    <div class="f2">
+      <div class="field"><label>Category – प्रकार</label><select id="exp-cat"></select></div>
+      <div class="field"><label>Expense Head – खर्चाचे शीर्षक *</label><select id="exp-head"></select></div>
+    </div>
+    <div class="f2">
+      <div class="field"><label>Amount – रक्कम (₹) *</label><input type="number" id="exp-amt" placeholder="0" min="1"></div>
+      <div class="field"><label>Date – दिनांक *</label><input type="date" id="exp-date"></div>
+    </div>
+    <div class="f2">
+      <div class="field"><label>Payment Mode – पद्धत</label><select id="exp-mode"></select></div>
+      <div class="field"><label>Vendor – विक्रेता</label><select id="exp-vendor"></select></div>
+    </div>
+    <div class="field"><label>Notes – नोंदी</label><input type="text" id="exp-notes" placeholder="Details / Remarks"></div>
+    <button class="btn btn-r" id="btn-save-exp">Record – नोंदवा</button>
+    <button class="btn btn-g" onclick="document.querySelectorAll('.modal-ov').forEach(m=>m.classList.remove('active'))">Cancel – रद्द करा</button>
+  </div>
+</div>
+
+<!-- CLIENT PAYMENT MODAL -->
+<div class="modal-ov" id="cpay-modal">
+  <div class="sheet">
+    <div class="s-handle"></div>
+    <div class="s-title">Add Payment – देयक जोडा</div>
+    <input type="hidden" id="cpay-evid">
+    <input type="hidden" id="cpay-id">
+    <div class="field"><label>Amount – रक्कम (₹) *</label><input type="number" id="cpay-amt" placeholder="0" min="1"></div>
+    <div class="f2">
+      <div class="field"><label>Date – दिनांक *</label><input type="date" id="cpay-date"></div>
+      <div class="field"><label>Mode – पद्धत</label><select id="cpay-mode"></select></div>
+    </div>
+    <div class="field"><label>Notes – नोंदी</label><input type="text" id="cpay-notes" placeholder="Reference / Remark"></div>
+    <button class="btn btn-o" id="btn-save-cpay">Add – जोडा</button>
+    <button class="btn btn-g" onclick="document.querySelectorAll('.modal-ov').forEach(m=>m.classList.remove('active'))">Cancel – रद्द करा</button>
+  </div>
+</div>
+
+<!-- VENDOR MODAL -->
+<div class="modal-ov" id="ven-modal">
+  <div class="sheet">
+    <div class="s-handle"></div>
+    <div class="s-title" id="ven-mtitle">New Vendor – नवीन विक्रेता</div>
+    <input type="hidden" id="ven-id">
+    <div class="field"><label>Vendor Name – विक्रेत्याचे नाव *</label><input type="text" id="ven-name" placeholder="Business / Supplier name"></div>
+    <div class="f2">
+      <div class="field"><label>Category – प्रकार *</label><select id="ven-cat"></select></div>
+      <div class="field"><label>Specialty – विशेषता</label><select id="ven-specialty"></select></div>
+    </div>
+    <div class="f2">
+      <div class="field"><label>Phone – मोबाईल</label><input type="tel" id="ven-phone" placeholder="9XXXXXXXXX"></div>
+      <div class="field"><label>Notes – नोंदी</label><input type="text" id="ven-notes" placeholder="Any notes"></div>
+    </div>
+    <button class="btn btn-o" id="btn-save-ven">Save – जतन करा</button>
+    <button class="btn btn-g" onclick="document.querySelectorAll('.modal-ov').forEach(m=>m.classList.remove('active'))">Cancel – रद्द करा</button>
+  </div>
+</div>
+
+<!-- VENDOR PAYMENT MODAL -->
+<div class="modal-ov" id="vpay-modal">
+  <div class="sheet">
+    <div class="s-handle"></div>
+    <div class="s-title">Vendor Payment – विक्रेता देयक</div>
+    <input type="hidden" id="vpay-venid">
+    <input type="hidden" id="vpay-id">
+    <div class="field"><label>Event – कार्यक्रम</label><select id="vpay-ev"></select></div>
+    <div class="f2">
+      <div class="field"><label>Category – प्रकार</label><select id="vpay-cat"></select></div>
+      <div class="field"><label>For – कशासाठी</label><select id="vpay-head"></select></div>
+    </div>
+    <div class="f2">
+      <div class="field"><label>Amount – रक्कम (₹) *</label><input type="number" id="vpay-amt" placeholder="0" min="1"></div>
+      <div class="field"><label>Date – दिनांक *</label><input type="date" id="vpay-date"></div>
+    </div>
+    <div class="f2">
+      <div class="field"><label>Mode – पद्धत</label><select id="vpay-mode"></select></div>
+      <div class="field"><label>Notes – नोंदी</label><input type="text" id="vpay-notes" placeholder="Reference"></div>
+    </div>
+    <button class="btn btn-o" id="btn-save-vpay">Save – जतन करा</button>
+    <button class="btn btn-g" onclick="document.querySelectorAll('.modal-ov').forEach(m=>m.classList.remove('active'))">Cancel – रद्द करा</button>
+  </div>
+</div>
+
+<!-- LINK EXPENSE MODAL -->
+<div class="modal-ov" id="link-modal">
+  <div class="sheet">
+    <div class="s-handle"></div>
+    <div class="s-title">Link Expenses – खर्च जोडा</div>
+    <div class="b-sm" style="margin-bottom:14px">Select unlinked expenses to assign – न जोडलेले खर्च निवडा.</div>
+    <input type="hidden" id="link-ven-id">
+    <div id="link-exp-list"></div>
+    <button class="btn btn-o" id="btn-save-link" style="margin-top:8px">Link – जोडा</button>
+    <button class="btn btn-g" onclick="document.querySelectorAll('.modal-ov').forEach(m=>m.classList.remove('active'))">Cancel – रद्द करा</button>
+  </div>
+</div>
+
+<!-- LIGHTBOX -->
+<div id="lightbox">
+  <img id="lb-img" alt="Event photo">
+  <div class="lb-actions">
+    <button class="lb-btn" onclick="document.getElementById('lightbox').style.display='none'">✕ Close</button>
+    <button class="lb-btn del" id="lb-delete">🗑 Delete – हटवा</button>
+  </div>
+</div>
+
+<!-- ── SERVICE WORKER ── -->
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch((err) => console.log('SW registration error:', err));
   }
 </script>
+
+<!-- ── MODULE ENTRY POINT ── -->
+<script type="module" src="app.js"></script>
+
+<!-- ── QUICK ACTION WIRING ── -->
+<script>
+  document.getElementById('qa-newevent').addEventListener('click', () => {
+    document.getElementById('n-events').click();
+    setTimeout(() => document.getElementById('fab').click(), 60);
+  });
+  document.getElementById('drawer-bg').addEventListener('click', () => {
+    document.getElementById('drawer').classList.remove('active');
+  });
+</script>
+
 </body>
 </html>

@@ -1,7 +1,7 @@
 {
-  "name": "Flavor Fusion Expense Calculator",
-  "short_name": "ExpenseCalc",
-  "description": "Event and expense tracking calculator",
+  "name": "Flavor Fusion Business",
+  "short_name": "FlavorFusion",
+  "description": "Flavor Fusion Business Operating System — private, offline-first catering & expense tracker",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
@@ -27,5 +27,8 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "categories": ["business", "finance"],
+  "lang": "en",
+  "dir": "ltr"
 }
