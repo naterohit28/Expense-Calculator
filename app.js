@@ -6,7 +6,7 @@
 
 import {
   getAll, putOne, deleteOne, getMeta, setMeta,
-  savePhoto, getPhotosForEvent, deletePhoto,
+  savePhoto, getPhotosForEvent, deletePhoto, saveBill, getBillsForExpense,
   exportAllData, importAllData, checkAndMigrate
 } from './db.js';
 
@@ -23,7 +23,9 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 /* ── STATE ───────────────────────────────────────── */
-let D = { events: [], expenses: [], vendors: [], cPays: [], vPays: [] };
+// drafts: bills snapped but not filled in yet. Stored in the expenses store with
+// draft: true, but kept out of D.expenses so they never touch totals or costing.
+let D = { events: [], expenses: [], drafts: [], vendors: [], cPays: [], vPays: [] };
 let CT = 'home';
 let curRef = null;          // id shown on a detail page (event / vendor)
 let launched = false;
@@ -33,6 +35,13 @@ let pinBuffer        = '';
 let pinFails = 0, pinLockedUntil = 0;
 let lastExport = null;      // ISO time of the last backup export
 let pickVendorForExpense = null;  // set while "+ New vendor" is opened from the expense sheet
+let billTarget = 'sheet';         // where the next bill photo goes: the open expense sheet, or a new draft ('snap')
+let lbOnDelete = null;            // what the lightbox Delete button does for the photo on show
+
+// The expense being edited in the sheet. Bills are saved to storage as soon as they're
+// taken (under this id); `added` are discarded if the sheet is closed without saving,
+// `removed` are only deleted from storage once the expense is saved.
+let expWork = { id: '', bills: [], added: [], removed: [], saved: false };
 
 // List filters (kept while the app is open)
 const F = { evQ: '', ev: 'all', expQ: '', exp: 'all', venQ: '' };
@@ -115,12 +124,17 @@ async function boot() {
 }
 
 async function loadAll() {
-  const [events, expenses, vendors, cPays, vPays] = await Promise.all([
+  const [events, allExpenses, vendors, cPays, vPays] = await Promise.all([
     getAll('events'), getAll('expenses'), getAll('vendors'),
     getAll('cPays'), getAll('vPays')
   ]);
-  D = { events, expenses, vendors, cPays, vPays };
+  const expenses = allExpenses.filter(x => !x.draft);
+  const drafts   = allExpenses.filter(x => x.draft).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  D = { events, expenses, drafts, vendors, cPays, vPays };
 }
+
+// Drafts are "expenses" in storage but a separate list in memory
+function storeOf(type) { return type === 'drafts' ? 'expenses' : type; }
 
 async function seedIfEmpty() {
   if (D.events.length > 0) return;
@@ -474,7 +488,7 @@ function rHome() {
   const missing = eventsMissingCosts(D.events, D.expenses);
   const backupDays = lastExport ? daysSince(lastExport.slice(0, 10)) : null;
   const needBackup = D.events.length && (backupDays === null || backupDays >= 7);
-  q('nudges').innerHTML =
+  q('nudges').innerHTML = draftsCard() +
     (missing.length ? `
       <div class="sec"><span class="sec-title">Record costs – खर्च नोंदवा</span><span class="meta">${missing.length}</span></div>
       <div class="card">
@@ -527,6 +541,24 @@ function rHome() {
       </div>
     </div>`).join('')}</div>`
     : `<div class="card">${emptyState({ ic: 'check', tone: 'pos', compact: true, text: 'All payments collected – सर्व वसुली झाली' })}</div>`;
+}
+
+// Bills snapped earlier that still need an amount — shown on Home and Expenses
+function draftsCard() {
+  if (!D.drafts.length) return '';
+  return `
+    <div class="sec"><span class="sec-title">Bills to fill in – बिल भरा</span><span class="meta">${D.drafts.length}</span></div>
+    <div class="card list">${D.drafts.map(d => {
+      const ev = D.events.find(e => e.id === d.evId);
+      return `<div class="row" role="button" tabindex="0" data-action="fill-draft" data-id="${esc(d.id)}">
+        <div class="row-ic" style="background:var(--due-soft);color:var(--due)">${icon('camera', 18)}</div>
+        <div class="row-body">
+          <div class="title-sm">${tr('Bill photo', 'बिल फोटो')}${(d.billIds || []).length > 1 ? ` ×${d.billIds.length}` : ''}</div>
+          <div class="meta trunc">${fmtDate(d.date)}${ev ? ` · <span data-nl>${esc(ev.name)}</span>` : ''}</div>
+        </div>
+        <span class="btn-sm">${tr('Fill in', 'भरा')}</span>
+      </div>`;
+    }).join('')}</div>`;
 }
 
 /* ── EVENTS ──────────────────────────────────────── */
@@ -702,7 +734,7 @@ function expenseRow(x, { showEvent = true } = {}) {
   return `<div class="row" role="button" tabindex="0" data-action="edit-exp" data-id="${esc(x.id)}">
     <div class="row-ic">${catIcon(x.cat)}</div>
     <div class="row-body">
-      <div class="title-sm trunc">${esc(x.head || x.cat)}</div>
+      <div class="title-sm trunc">${esc(x.head || x.cat)}${(x.billIds || []).length ? `<span class="clip" aria-label="Bill attached">${icon('paperclip', 14)}</span>` : ''}</div>
       <div class="meta trunc">${bits}</div>
     </div>
     <div class="row-end">
@@ -739,7 +771,7 @@ function rExp() {
   q('exp-credit').textContent = fmtCurrency(vendorDuesTotal());
 
   if (!D.expenses.length) {
-    q('exp-list').innerHTML = emptyState({
+    q('exp-list').innerHTML = draftsCard() + emptyState({
       ic: 'receipt', text: 'No expenses yet – खर्च नाही',
       action: `<button type="button" class="btn btn-primary" data-action="quick" data-id="expense">${icon('plus', 18)}Add expense – खर्च जोडा</button>`
     });
@@ -758,7 +790,7 @@ function rExp() {
     groups.get(k).push(x);
   });
 
-  q('exp-list').innerHTML = [...groups].map(([k, xs]) => {
+  q('exp-list').innerHTML = draftsCard() + [...groups].map(([k, xs]) => {
     const d = new Date(k + '-01');
     const month = !isNaN(d)
       ? tr(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }), d.toLocaleDateString('mr-IN', { month: 'long', year: 'numeric' }))
@@ -1102,13 +1134,88 @@ function openExpModal(arg) {
   setExpPay(ex ? (isOnCredit(ex) ? 'credit' : 'paid') : 'paid');
   q('exp-date').value  = ex?.date || today();
   q('exp-notes').value = ex?.notes || '';
-  q('exp-mtitle').textContent = ex ? 'Edit expense – संपादित करा' : 'Record expense – खर्च नोंदवा';
+  q('exp-mtitle').textContent = ex?.draft ? 'Fill in bill – बिल भरा'
+                              : ex ? 'Edit expense – संपादित करा' : 'Record expense – खर्च नोंदवा';
   q('btn-del-exp').hidden       = !ex;
   q('btn-save-exp-next').hidden = !!ex;
   clearFieldErrors();
-  openSheet('exp-modal');
+  startExpSession(ex);
+  openSheet('exp-modal', endExpSession);
   // Keyboard opens straight onto the amount (focus must happen inside the tap)
-  if (!ex) q('exp-amt').focus({ preventScroll: true });
+  if (!ex || ex.draft) q('exp-amt').focus({ preventScroll: true });
+}
+
+/* Bill photos inside the expense sheet */
+function startExpSession(ex) {
+  expWork = { id: ex?.id || uid('EX'), bills: [], added: [], removed: [], saved: false };
+  renderExpBills();
+  if (ex && (ex.billIds || []).length) {
+    const id = ex.id;
+    getBillsForExpense(id).then(bills => {
+      if (expWork.id !== id) return;            // sheet moved on meanwhile
+      expWork.bills = bills.map(b => ({ id: b.id, data: b.data }));
+      renderExpBills();
+    });
+  }
+}
+
+// Sheet closed: drop bills taken for an entry that was never saved
+function endExpSession() {
+  if (!expWork.saved) expWork.added.forEach(id => deletePhoto(id));
+  expWork = { id: '', bills: [], added: [], removed: [], saved: true };
+}
+
+function renderExpBills() {
+  q('exp-bills').innerHTML =
+    expWork.bills.map(b => `<img class="bill-thumb" src="${esc(b.data)}" alt="Bill photo" role="button" tabindex="0" data-action="bill-view" data-id="${esc(b.id)}">`).join('') +
+    `<button type="button" class="bill-add" data-action="bill-cam">${icon('camera', 20)}<span class="t-en">Camera</span><span class="t-mr">कॅमेरा</span></button>` +
+    `<button type="button" class="bill-add" data-action="bill-gal">${icon('image', 20)}<span class="t-en">Gallery</span><span class="t-mr">गॅलरी</span></button>`;
+}
+
+async function addBillsToSheet(files) {
+  for (const file of Array.from(files)) {
+    try {
+      const b = await saveBill(expWork.id, file);
+      expWork.bills.push(b);
+      expWork.added.push(b.id);
+    } catch { showToast('Could not read that photo – फोटो वाचता आला नाही', 'error'); }
+  }
+  renderExpBills();
+}
+
+function viewBill(billId) {
+  const b = expWork.bills.find(x => x.id === billId); if (!b) return;
+  openLightbox(b.data, async () => {
+    const ok = await askSheet({
+      title: 'Remove this bill photo? – बिल फोटो काढायचा?',
+      actions: [{ label: 'Remove – काढा', value: true, style: 'btn-danger' }]
+    });
+    if (!ok) return;
+    expWork.bills = expWork.bills.filter(x => x.id !== billId);
+    expWork.removed.push(billId);
+    await closeOverlay();     // the lightbox
+    renderExpBills();
+  });
+}
+
+/* "Snap now, fill later": each photo becomes a draft expense to complete later */
+async function snapBills(files) {
+  const made = [];
+  for (const file of Array.from(files)) {
+    const id = uid('EX');
+    try {
+      const b = await saveBill(id, file);
+      const draft = { id, draft: true, createdAt: new Date().toISOString(), evId: defaultEventId(), date: today(),
+                      amt: 0, cat: '', head: '', pay: 'paid', mode: '', venId: '', notes: '', billIds: [b.id] };
+      await putOne('expenses', draft);
+      D.drafts.unshift(draft);
+      made.push(draft);
+    } catch { showToast('Could not read that photo – फोटो वाचता आला नाही', 'error'); }
+  }
+  if (!made.length) return;
+  refreshCurrent();
+  showToast(made.length > 1 ? `${made.length} bills saved — fill in later – ${made.length} बिल जतन, नंतर भरा` : 'Bill saved — fill in later – नंतर भरा', 'success',
+    { label: 'Fill now – आता भरा', run: () => openExpModal(made[0]) });
 }
 
 async function saveExpense({ next = false } = {}) {
@@ -1124,9 +1231,8 @@ async function saveExpense({ next = false } = {}) {
     return;
   }
 
-  const id = qv('exp-id');
   const record = {
-    id:    id || uid('EX'),
+    id:    expWork.id,
     evId:  data.evId,
     cat:   qv('exp-cat'),
     head:  qv('exp-head'),
@@ -1135,12 +1241,17 @@ async function saveExpense({ next = false } = {}) {
     pay,
     mode:  pay === 'paid' ? qv('exp-mode') : '',
     venId,
-    notes: qv('exp-notes')
+    notes: qv('exp-notes'),
+    billIds: expWork.bills.map(b => b.id)
   };
 
   await putOne('expenses', record);
-  if (id) D.expenses = D.expenses.map(x => x.id === id ? record : x);
-  else    D.expenses.push(record);
+  // A filled-in draft becomes a real expense
+  D.drafts = D.drafts.filter(d => d.id !== record.id);
+  const i = D.expenses.findIndex(x => x.id === record.id);
+  if (i >= 0) D.expenses[i] = record; else D.expenses.push(record);
+  for (const bid of expWork.removed) await deletePhoto(bid);
+  expWork.saved = true;
   writePref('ffv2_lastexp', { cat: record.cat, head: record.head, mode: record.mode || readPref('ffv2_lastexp', {}).mode });
 
   refreshCurrent();
@@ -1149,6 +1260,7 @@ async function saveExpense({ next = false } = {}) {
     q('exp-amt').value = '';
     q('exp-notes').value = '';
     clearFieldErrors();
+    startExpSession(null);
     q('exp-amt').focus({ preventScroll: true });
     showToast(`Saved ${fmtCurrency(record.amt)} · add the next – पुढील खर्च`);
     return;
@@ -1284,8 +1396,9 @@ async function deleteRow(type, id) {
   }
   if (type === 'events' || type === 'vendors') {
     const n = (len, w) => len ? `${len} ${w}${len > 1 ? 's' : ''}` : '';
+    const billCount = (removed.expenses || []).reduce((s, x) => s + (x.billIds || []).length, 0);
     const extra = [n(removed.cPays?.length, 'payment'), n(removed.expenses?.length, 'expense'),
-                   n(removed.vPays?.length, 'payment'), n(photos.length, 'photo')].filter(Boolean);
+                   n(removed.vPays?.length, 'payment'), n(photos.length, 'photo'), n(billCount, 'bill photo')].filter(Boolean);
     const ok = await askSheet({
       title: `Delete ${rec.name}? – हटवायचे का?`,
       message: extra.length ? `This also deletes ${extra.join(', ')} recorded for it.` : '',
@@ -1294,9 +1407,14 @@ async function deleteRow(type, id) {
     if (!ok) return;
   }
 
+  // Bill photos go with their expenses (and come back with Undo)
+  for (const x of [...(removed.expenses || []), ...(removed.drafts || [])]) {
+    if ((x.billIds || []).length) photos.push(...await getBillsForExpense(x.id));
+  }
+
   for (const [store, recs] of Object.entries(removed)) {
     const ids = new Set(recs.map(r => r.id));
-    for (const r of recs) await deleteOne(store, r.id);
+    for (const r of recs) await deleteOne(storeOf(store), r.id);
     D[store] = D[store].filter(x => !ids.has(x.id));
   }
   for (const p of photos) await deletePhoto(p.id);
@@ -1311,7 +1429,7 @@ async function deleteRow(type, id) {
     label: 'Undo – परत',
     run: async () => {
       for (const [store, recs] of Object.entries(removed)) {
-        for (const r of recs) await putOne(store, r);
+        for (const r of recs) await putOne(storeOf(store), r);
         D[store].push(...recs);
       }
       for (const p of photos) await putOne('photos', p);
@@ -1364,16 +1482,22 @@ function readFileAsDataUrl(file) {
   });
 }
 
-function openLightbox(evId, photoId) {
+// Full-screen photo; onDelete (optional) runs when its Delete button is tapped
+function openLightbox(src, onDelete) {
+  lbOnDelete = onDelete || null;
+  q('lb-delete').hidden = !onDelete;
+  q('lb-img').src = src;
+  q('lightbox').style.display = 'flex';
+  openOverlay(() => { q('lightbox').style.display = 'none'; lbOnDelete = null; });
+}
+
+function openEventPhoto(evId, photoId) {
   const photos = document.querySelectorAll(`[data-action="lightbox"][data-evid="${CSS.escape(evId)}"]`);
   const ids    = Array.from(photos).map(p => p.dataset.photoid);
   const idx    = ids.indexOf(photoId);
   lightboxState = { evId, photoIds: ids, idx: Math.max(0, idx) };
   const src = photos[lightboxState.idx]?.src;
-  if (!src) return;
-  q('lb-img').src = src;
-  q('lightbox').style.display = 'flex';
-  openOverlay(() => { q('lightbox').style.display = 'none'; });
+  if (src) openLightbox(src, deleteCurrentPhoto);
 }
 
 async function deleteCurrentPhoto() {
@@ -1435,23 +1559,38 @@ async function saveLinkExpenses() {
 }
 
 /* ── EXPORT / IMPORT ─────────────────────────────── */
+// Opens the phone's share sheet (WhatsApp, Drive, email…) so the backup leaves the
+// phone; where sharing files isn't supported (most desktops) it downloads instead.
 async function exportData() {
+  let file;
   showLoading(true);
   try {
     const payload = await exportAllData();
-    const json    = JSON.stringify(payload, null, 2);
-    const blob    = new Blob([json], { type: 'application/json' });
-    const url     = URL.createObjectURL(blob);
-    const a       = document.createElement('a');
-    a.href        = url;
-    a.download    = `flavor-fusion-backup-${today()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    lastExport = new Date().toISOString();
-    await setMeta('last_export', lastExport);
-    showToast('Backup exported – निर्यात झाली');
-    if (CT === 'home') rHome();
+    file = new File([JSON.stringify(payload)], `flavor-fusion-backup-${today()}.json`, { type: 'application/json' });
   } finally { showLoading(false); }
+
+  let how = 'download';
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: 'Flavor Fusion backup', text: `Flavor Fusion backup ${fmtDate(today())}` });
+      how = 'shared';
+    } catch (e) {
+      if (e.name === 'AbortError') return;   // closed the share sheet: nothing was saved
+    }
+  }
+  if (how === 'download') {
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url; a.download = file.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  lastExport = new Date().toISOString();
+  await setMeta('last_export', lastExport);
+  const size = file.size > 1048576 ? `${(file.size / 1048576).toFixed(1)} MB` : `${Math.ceil(file.size / 1024)} KB`;
+  showToast(how === 'shared' ? `Backup shared (${size}) – बॅकअप पाठवला` : `Backup saved to Downloads (${size}) – बॅकअप जतन`);
+  if (CT === 'home') rHome();
 }
 
 async function handleImport(file) {
@@ -1533,7 +1672,13 @@ function bindAllEvents() {
       case 'edit-cpay':    openCPayModal(null, id); break;
       case 'edit-vpay':    openVPayModal(null, id); break;
       case 'add-photo':    triggerPhoto(id); break;
-      case 'lightbox':     openLightbox(el.dataset.evid, el.dataset.photoid); break;
+      case 'lightbox':     openEventPhoto(el.dataset.evid, el.dataset.photoid); break;
+      // Bill photos: the file picker must open inside the tap itself
+      case 'snap':         billTarget = 'snap';  q('bill-cam').click(); break;
+      case 'bill-cam':     billTarget = 'sheet'; q('bill-cam').click(); break;
+      case 'bill-gal':     billTarget = 'sheet'; q('bill-gal').click(); break;
+      case 'bill-view':    viewBill(id); break;
+      case 'fill-draft':   openExpModal(D.drafts.find(d => d.id === id)); break;
       case 'delete':       await deleteRow(el.dataset.type, id); break;
       case 'export':       exportData(); break;
       case 'period':       period = id; writePref('ffv2_period', id); renderPage(CT); break;
@@ -1586,6 +1731,12 @@ function bindAllEvents() {
 
   // Photo / import inputs
   q('photo-input').addEventListener('change', function () { handlePhotoInput(this.files); });
+  ['bill-cam', 'bill-gal'].forEach(inputId => q(inputId).addEventListener('change', async function () {
+    const files = [...this.files];
+    this.value = '';
+    if (!files.length) return;
+    if (billTarget === 'snap') snapBills(files); else addBillsToSheet(files);
+  }));
   q('import-input').addEventListener('change', function () { handleImport(this.files[0]); });
 
   // Expense sheet controls
@@ -1606,7 +1757,8 @@ function bindAllEvents() {
   q('btn-save-event').addEventListener('click', saveEvent);
   q('btn-save-exp').addEventListener('click', () => saveExpense());
   q('btn-save-exp-next').addEventListener('click', () => saveExpense({ next: true }));
-  q('btn-del-exp').addEventListener('click', () => deleteFromSheet('expenses', 'exp-id'));
+  q('btn-del-exp').addEventListener('click', () =>
+    deleteFromSheet(D.drafts.some(d => d.id === qv('exp-id')) ? 'drafts' : 'expenses', 'exp-id'));
   q('btn-save-cpay').addEventListener('click', saveCPay);
   q('btn-del-cpay').addEventListener('click', () => deleteFromSheet('cPays', 'cpay-id'));
   q('btn-save-ven').addEventListener('click', saveVendor);
@@ -1628,14 +1780,15 @@ function bindAllEvents() {
   // Settings
   document.querySelectorAll('[data-theme-set]').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.themeSet)));
   document.querySelectorAll('[data-lang-set]').forEach(b => b.addEventListener('click', () => { setLang(b.dataset.langSet); syncSettingsUI(); }));
-  q('btn-export').addEventListener('click', async () => { await closeOverlay(); exportData(); });
+  // Sharing must start within the tap, so begin the backup first, then close the panel
+  q('btn-export').addEventListener('click', () => { exportData(); closeOverlay(); });
   // File picker must open inside the tap itself, so click first, then close the panel
   q('btn-import').addEventListener('click', () => { q('import-input').click(); closeOverlay(); });
   q('btn-set-pin').addEventListener('click', async () => { await closeOverlay(); showPinScreen('set'); });
   q('btn-remove-pin').addEventListener('click', async () => { await closeOverlay(); removePin(); });
 
   // Lightbox
-  q('lb-delete').addEventListener('click', deleteCurrentPhoto);
+  q('lb-delete').addEventListener('click', () => lbOnDelete?.());
   q('lightbox').addEventListener('click', e => { if (e.target === q('lightbox')) closeOverlay(); });
 }
 

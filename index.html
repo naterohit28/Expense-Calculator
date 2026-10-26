@@ -103,8 +103,8 @@
 
     <div class="d-group">
       <span class="label">Backup – बॅकअप <span class="meta" id="backup-meta" data-nl></span></span>
-      <button type="button" class="d-item" id="btn-export"><i data-ic="download"></i>Export backup – निर्यात</button>
-      <button type="button" class="d-item" id="btn-import"><i data-ic="upload"></i>Import backup – आयात</button>
+      <button type="button" class="d-item" id="btn-export"><i data-ic="upload"></i>Share / save backup – बॅकअप पाठवा</button>
+      <button type="button" class="d-item" id="btn-import"><i data-ic="download"></i>Import backup – आयात</button>
     </div>
 
     <div class="d-group">
@@ -118,8 +118,12 @@
     </div>
   </div>
 </div>
-<input type="file" id="import-input" accept=".json" hidden>
+<!-- Phones often label a shared .json as text or octet-stream; accept those so the file isn't greyed out -->
+<input type="file" id="import-input" accept=".json,application/json,text/plain,application/octet-stream" hidden>
 <input type="file" id="photo-input" accept="image/*" multiple hidden>
+<!-- Bill photos: camera opens directly; gallery for bills already on the phone (e.g. from WhatsApp) -->
+<input type="file" id="bill-cam" accept="image/*" capture="environment" hidden>
+<input type="file" id="bill-gal" accept="image/*" multiple hidden>
 
 <!-- ── MAIN ── -->
 <main class="main">
@@ -138,8 +142,8 @@
       <button type="button" class="qa" data-action="quick" data-id="expense">
         <span class="qa-ic"><i data-ic="receipt"></i></span><span><span class="t-en">Add expense</span><span class="t-mr">खर्च जोडा</span></span>
       </button>
-      <button type="button" class="qa" data-action="go" data-id="events">
-        <span class="qa-ic"><i data-ic="list"></i></span><span><span class="t-en">All events</span><span class="t-mr">सर्व कार्यक्रम</span></span>
+      <button type="button" class="qa" data-action="snap">
+        <span class="qa-ic"><i data-ic="camera"></i></span><span><span class="t-en">Snap a bill</span><span class="t-mr">बिल फोटो</span></span>
       </button>
       <button type="button" class="qa" data-action="quick" data-id="vendor">
         <span class="qa-ic"><i data-ic="store"></i></span><span><span class="t-en">Add vendor</span><span class="t-mr">विक्रेता जोडा</span></span>
@@ -245,6 +249,10 @@
         <button type="button" data-pay="paid" aria-pressed="true">Paid now – दिले</button>
         <button type="button" data-pay="credit" aria-pressed="false">On credit – उधार</button>
       </div>
+    </div>
+    <div class="field">
+      <label>Bill photo – बिल फोटो</label>
+      <div class="bill-strip" id="exp-bills"></div>
     </div>
     <div class="field"><label>Category – प्रकार</label><div class="cat-chips" id="exp-cats" role="group" aria-label="Category"></div><input type="hidden" id="exp-cat"></div>
     <div class="field"><label for="exp-head">For – कशासाठी</label><select id="exp-head"></select></div>

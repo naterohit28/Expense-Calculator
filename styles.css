@@ -247,6 +247,17 @@ html.dark .btn-danger { background: #DC2626; }
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center;
 }
 .cat-chip[aria-pressed="true"] { background: var(--brand-soft); border-color: var(--brand-text); color: var(--brand-text); }
+/* Bill photos attached to an expense */
+.bill-strip { display: flex; gap: var(--s2); overflow-x: auto; padding: 2px 0; }
+.bill-thumb { width: 64px; height: 64px; border-radius: var(--r-sm); object-fit: cover; flex-shrink: 0; border: 1px solid var(--line); cursor: pointer; }
+.bill-add {
+  width: 64px; height: 64px; flex-shrink: 0; border-radius: var(--r-sm); border: 1.5px dashed var(--line-strong);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  color: var(--text-2); font-size: 11px; font-weight: 600; text-align: center;
+}
+.bill-add:active { background: var(--surface-2); }
+.bill-add .t-mr { display: none; } html[data-lang="mr"] .bill-add .t-mr { display: inline; }
+.clip { color: var(--text-3); display: inline-flex; vertical-align: -3px; margin-left: 4px; }
 .amt-input { font-size: 24px !important; font-weight: 700 !important; min-height: 56px !important; }
 #exp-pay button[data-pay="credit"][aria-pressed="true"] { color: var(--due); }
 

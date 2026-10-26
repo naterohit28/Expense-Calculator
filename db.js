@@ -6,7 +6,7 @@
  */
 
 const DB_NAME    = 'FlavorFusionDB';
-const DB_VERSION = 3;   // v3: photos indexed by eventId
+const DB_VERSION = 4;   // v3: photos indexed by eventId · v4: bill photos indexed by expenseId
 const STORES     = ['events','expenses','vendors','cPays','vPays','photos','meta'];
 
 let _db = null;
@@ -27,6 +27,8 @@ export function openDB() {
       // Opening an event used to read every photo in the app; the index reads only its own
       const photos = e.target.transaction.objectStore('photos');
       if (!photos.indexNames.contains('eventId')) photos.createIndex('eventId', 'eventId');
+      // Bill/invoice photos live in the same store, keyed to their expense
+      if (!photos.indexNames.contains('expenseId')) photos.createIndex('expenseId', 'expenseId');
     };
 
     req.onsuccess = e => { _db = e.target.result; resolve(_db); };
@@ -125,6 +127,43 @@ export async function getPhotosForEvent(eventId) {
 
 export async function deletePhoto(photoId) {
   await deleteOne('photos', photoId);
+}
+
+/* ── BILL / INVOICE PHOTOS ───────────────────────── */
+// Bills keep more detail than event photos so amounts stay readable (~150–300 KB each)
+export async function saveBill(expenseId, file) {
+  const data = await compressFile(file, 1400, 0.7);
+  const id = `bill_${expenseId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  await putOne('photos', { id, expenseId, data, createdAt: new Date().toISOString() });
+  return { id, data };
+}
+
+export async function getBillsForExpense(expenseId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('photos', 'readonly').objectStore('photos').index('expenseId').getAll(expenseId);
+    req.onsuccess = () => resolve((req.result || []).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')));
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+// Decode straight from the File (no full-size data URL in memory), longest side capped
+function compressFile(file, maxSide, quality) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Not an image')); };
+    img.src = url;
+  });
 }
 
 function compressImage(dataUrl, maxWidth, quality) {
