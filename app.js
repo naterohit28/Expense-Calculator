@@ -22,6 +22,9 @@ import {
 import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
+// Shown in Settings; bump with each release so the phone can confirm which code it runs
+const APP_BUILD = '2.3.2';
+
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
 // draft: true, but kept out of D.expenses so they never touch totals or costing.
@@ -96,6 +99,7 @@ function phoneDigits(p) {
 
 /* ── BOOT ────────────────────────────────────────── */
 async function boot() {
+  q('app-build').textContent = 'v' + APP_BUILD;
   hydrateIcons();
   initTheme();
   initLang();
