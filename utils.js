@@ -176,7 +176,49 @@ export function calcEventPL(ev, cPays, expenses) {
   const profit   = ev.billing - expTotal;
   const margin   = ev.billing > 0 ? Math.round(profit / ev.billing * 100) : 0;
   const pctPaid  = ev.billing > 0 ? Math.min(100, received / ev.billing * 100) : 0;
-  return { received, expTotal, pending, profit, margin, pctPaid };
+  // Per-plate figures need a guest count; budget figures need an expected cost
+  const guests   = Number(ev.guests) || 0;
+  const budget   = Number(ev.budget) || 0;
+  const perPlate = n => guests ? Math.round(n / guests) : null;
+  return {
+    received, expTotal, pending, profit, margin, pctPaid,
+    guests, billPerPlate: perPlate(ev.billing), costPerPlate: perPlate(expTotal), profitPerPlate: perPlate(profit),
+    budget, budgetUsed: budget ? Math.round(expTotal / budget * 100) : null, overBudget: budget ? expTotal - budget : 0
+  };
+}
+
+/* Credit purchases still unpaid, each with what's left on it. Vendor payments aren't
+   tied to a particular purchase, so they settle that vendor's oldest credit first. */
+export function unpaidCredit(expenses, vPays) {
+  const byVendor = new Map();
+  for (const x of expenses) {
+    if (!isOnCredit(x) || !x.venId) continue;
+    if (!byVendor.has(x.venId)) byVendor.set(x.venId, []);
+    byVendor.get(x.venId).push(x);
+  }
+  const out = [];
+  for (const [venId, xs] of byVendor) {
+    let pool = vPays.filter(p => p.venId === venId).reduce((s, p) => s + (p.amt || 0), 0);
+    xs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    for (const x of xs) {
+      const covered = Math.min(pool, x.amt || 0);
+      pool -= covered;
+      const left = (x.amt || 0) - covered;
+      if (left > 0) out.push({ x, left });
+    }
+  }
+  return out;
+}
+
+// Days from today until a YYYY-MM-DD date (negative = past)
+export function daysUntil(d) {
+  return -daysSince(d);
+}
+
+export function addDays(iso, n) {
+  const d = new Date(iso);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /* An expense is either paid on the spot (pay: 'paid') or taken on credit from
@@ -298,6 +340,16 @@ export function generateInsights(events, cPays, expenses, vendors, vPays = []) {
     insights.push({ type: 'alert', icon: 'alert',
       en: `${amt} overdue from ${overdue.length} event${overdue.length > 1 ? 's' : ''}`,
       mr: `${overdue.length} कार्यक्रमांची ${amt} थकीत वसुली` });
+  }
+
+  // Events that have spent more than their expected cost
+  const over = evPL.filter(r => r.budget && r.overBudget > 0).sort((a, c) => c.overBudget - a.overBudget);
+  if (over.length) {
+    const top = over[0];
+    const n = b(esc(top.ev.name)), amt = b(fmtCurrency(top.overBudget));
+    insights.push({ type: 'alert', icon: 'warn',
+      en: over.length > 1 ? `${over.length} events are over budget — ${n} by ${amt}` : `${n} is ${amt} over budget`,
+      mr: over.length > 1 ? `${over.length} कार्यक्रम बजेटपेक्षा जास्त — ${n} ${amt} ने` : `${n} बजेटपेक्षा ${amt} जास्त` });
   }
 
   // Vendor dues — net of payments made; advances to one vendor don't offset dues to another

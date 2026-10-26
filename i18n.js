@@ -18,7 +18,7 @@ const DEV   = /[ऀ-ॿ]/;
 // "<English> – <Marathi>": English side has no Devanagari, Marathi side has some
 const PAIR  = /^(\s*)([^ऀ-ॿ]*?\S)\s+–\s+(.*[ऀ-ॿ].*?)(\s*)$/s;
 
-let mode = 'both';
+let mode = 'en';   // default until the user picks a language in Settings
 const originals = new WeakMap();   // text node → original "English – मराठी" string
 
 export function L(text) {

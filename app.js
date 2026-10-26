@@ -14,7 +14,7 @@ import {
   EXPENSE_HEADS, EVENT_TYPES, PAY_MODES, SEED_DATA, PERIODS,
   uid, today, daysSince, fmtDate, fmtCurrency, esc,
   validate, EVENT_RULES, EXPENSE_RULES, PAYMENT_RULES, VENDOR_RULES, VPAY_RULES,
-  calcEventReceived, calcEventPL, calcVendorBalance, isOnCredit,
+  calcEventReceived, calcEventPL, calcVendorBalance, isOnCredit, unpaidCredit, daysUntil, addDays,
   sliceByPeriod, eventsMissingCosts,
   generateInsights, isOverdue, hashPin, verifyPin, isLegacyPinHash
 } from './utils.js';
@@ -23,7 +23,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '2.3.2';
+const APP_BUILD = '2.4.0';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -440,7 +440,14 @@ function goBack(fallback) {
   else go(fallback);
 }
 
+// expense id → amount still unpaid on that credit purchase (recomputed on every render)
+let CREDIT_LEFT = new Map();
+function refreshCredit() {
+  CREDIT_LEFT = new Map(unpaidCredit(D.expenses, D.vPays).map(u => [u.x.id, u.left]));
+}
+
 function renderPage(id) {
+  refreshCredit();
   if (id === 'home')     rHome();
   if (id === 'events')   rEvents();
   if (id === 'expenses') rExp();
@@ -450,6 +457,7 @@ function renderPage(id) {
 
 // Re-render whatever is on screen after data changes
 function refreshCurrent() {
+  refreshCredit();
   if (CT === 'evdetail')  { showEvDetail(curRef, { fromHistory: true }); return; }
   if (CT === 'vendetail') { showVenDetail(curRef, { fromHistory: true }); return; }
   renderPage(CT);
@@ -502,7 +510,7 @@ function rHome() {
   const missing = eventsMissingCosts(D.events, D.expenses);
   const backupDays = lastExport ? daysSince(lastExport.slice(0, 10)) : null;
   const needBackup = D.events.length && (backupDays === null || backupDays >= 7);
-  q('nudges').innerHTML = draftsCard() +
+  q('nudges').innerHTML = draftsCard() + payVendorsCard() +
     (missing.length ? `
       <div class="sec"><span class="sec-title">Record costs – खर्च नोंदवा</span><span class="meta">${missing.length}</span></div>
       <div class="card">
@@ -557,6 +565,28 @@ function rHome() {
     : `<div class="card">${emptyState({ ic: 'check', tone: 'pos', compact: true, text: 'All payments collected – सर्व वसुली झाली' })}</div>`;
 }
 
+// Credit purchases with a pay-by date that's past or within a week, soonest first
+function payVendorsCard() {
+  const due = unpaidCredit(D.expenses, D.vPays)
+    .filter(u => u.x.dueDate && daysUntil(u.x.dueDate) <= 7)
+    .sort((a, b) => a.x.dueDate.localeCompare(b.x.dueDate));
+  if (!due.length) return '';
+  const total = due.reduce((s, u) => s + u.left, 0);
+  return `
+    <div class="sec"><span class="sec-title">Pay vendors – विक्रेत्यांना द्या</span><span class="meta">${fmtCurrency(total)}</span></div>
+    <div class="card list">${due.map(({ x, left }) => {
+      const ven = D.vendors.find(v => v.id === x.venId);
+      return `<div class="row" role="button" tabindex="0" data-action="vendetail" data-id="${esc(x.venId)}">
+        <div class="avatar" data-nl style="width:36px;height:36px;font-size:13px">${esc(initials(ven?.name))}</div>
+        <div class="row-body">
+          <div class="title-sm trunc" data-nl>${esc(ven?.name || '—')}</div>
+          <div class="meta trunc">${esc(x.head || x.cat)} · ${fmtDate(x.date)}</div>
+        </div>
+        <div class="row-end"><div class="amt-sm">${fmtCurrency(left)}</div>${creditChip(x)}</div>
+      </div>`;
+    }).join('')}</div>`;
+}
+
 // Bills snapped earlier that still need an amount — shown on Home and Expenses
 function draftsCard() {
   if (!D.drafts.length) return '';
@@ -583,7 +613,7 @@ function eventStatus(ev) {
 }
 
 function eventCard(ev) {
-  const { received: rec, pending: pend, pctPaid: pct } = calcEventPL(ev, D.cPays, D.expenses);
+  const { received: rec, pending: pend, pctPaid: pct, budget, overBudget } = calcEventPL(ev, D.cPays, D.expenses);
   const st = eventStatus(ev);
   let chip;
   if (pend <= 0)          chip = `<span class="chip pos">${tr('Paid', 'पूर्ण')}</span>`;
@@ -600,6 +630,7 @@ function eventCard(ev) {
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
         ${chip}
         ${st.noCosts ? `<span class="chip neg">${tr('No costs', 'खर्च नाही')}</span>` : ''}
+        ${budget && overBudget > 0 ? `<span class="chip neg">${tr('Over budget', 'बजेट ओलांडले')}</span>` : ''}
       </div>
     </div>
     <div class="item-foot">
@@ -650,6 +681,34 @@ function rEvents() {
 }
 
 /* ── EVENT DETAIL ────────────────────────────────── */
+// Per-plate figures and budget progress for an event; a nudge to add them if missing
+function costingBlock(pl, noCosts) {
+  const plate = pl.guests ? `
+    <div class="metrics">
+      <div class="metric"><div class="label">${tr(`Bill/plate · ${pl.guests}`, `बिल/ताट · ${pl.guests}`)}</div><div class="amt-md">${fmtCurrency(pl.billPerPlate)}</div></div>
+      <div class="metric"><div class="label">Cost/plate – खर्च/ताट</div><div class="amt-md">${fmtCurrency(pl.costPerPlate)}</div></div>
+      <div class="metric"><div class="label">Profit/plate – नफा/ताट</div><div class="amt-md ${noCosts ? 'muted' : pl.profitPerPlate >= 0 ? 'pos' : 'neg'}">${fmtCurrency(pl.profitPerPlate)}</div></div>
+    </div>` : '';
+  const used = pl.budgetUsed || 0;
+  const tone = used > 100 ? 'neg' : used >= 90 ? 'due' : 'pos';
+  const budget = pl.budget ? `
+    <div style="margin-top:var(--s4);padding-top:var(--s4);border-top:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--s2)">
+        <span class="label">${tr(`Budget ${fmtCurrency(pl.budget)}`, `बजेट ${fmtCurrency(pl.budget)}`)}</span>
+        <span class="amt-sm ${tone}">${pl.overBudget > 0
+          ? tr(`${fmtCurrency(pl.overBudget)} over`, `${fmtCurrency(pl.overBudget)} जास्त`)
+          : tr(`${fmtCurrency(-pl.overBudget)} left`, `${fmtCurrency(-pl.overBudget)} शिल्लक`)}</span>
+      </div>
+      <div class="prog" style="margin-top:6px"><span style="width:${Math.min(100, used)}%;background:var(--${tone})"></span></div>
+      <div class="meta" style="margin-top:4px">${tr(`${used}% of expected cost spent`, `अंदाजे खर्चाच्या ${used}% खर्च झाला`)}</div>
+    </div>` : '';
+  const ask = !pl.guests || !pl.budget ? `
+    <button type="button" class="btn-sm" style="margin-top:var(--s3)" data-action="open-ev-edit">${icon('plus', 16)}${
+      !pl.guests && !pl.budget ? tr('Add guests & budget', 'पाहुणे व बजेट जोडा')
+      : !pl.guests ? tr('Add guest count', 'पाहुणे जोडा') : tr('Add budget', 'बजेट जोडा')}</button>` : '';
+  return plate + budget + ask;
+}
+
 function reminderLink(ev, pending) {
   const msg = `Namaste! A gentle reminder from Flavor Fusion: ${fmtCurrency(pending)} is pending for ${ev.name} (${fmtDate(ev.date)}). Kindly arrange the payment. Thank you!\n\n`
             + `नमस्कार! ${ev.name} साठी ${fmtCurrency(pending)} बाकी आहे. कृपया देयक करावे. धन्यवाद!`;
@@ -658,9 +717,11 @@ function reminderLink(ev, pending) {
 
 async function showEvDetail(id, { fromHistory = false } = {}) {
   const ev = D.events.find(e => e.id === id); if (!ev) return;
+  refreshCredit();
   const pays = D.cPays.filter(p => p.evId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
   const exps = D.expenses.filter(x => x.evId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
-  const { received: rec, expTotal: exTot, pending: pend, profit, margin, pctPaid: pct } = calcEventPL(ev, D.cPays, D.expenses);
+  const plFull = calcEventPL(ev, D.cPays, D.expenses);
+  const { received: rec, expTotal: exTot, pending: pend, profit, margin, pctPaid: pct } = plFull;
   const photos = await getPhotosForEvent(id);
   const phone = phoneDigits(ev.mobile);
   const noCosts = isOverdue(ev) && !exps.length;
@@ -693,6 +754,7 @@ async function showEvDetail(id, { fromHistory = false } = {}) {
         <div class="metric"><div class="label">Profit – नफा</div><div class="amt-md ${noCosts ? 'muted' : profit >= 0 ? 'pos' : 'neg'}">${fmtCurrency(profit)}</div></div>
         <div class="metric"><div class="label">Margin – मार्जिन</div><div class="amt-md ${noCosts ? 'muted' : profit >= 0 ? 'pos' : 'neg'}">${ev.billing > 0 ? margin + '%' : '—'}</div></div>
       </div>
+      ${costingBlock(plFull, noCosts)}
       ${pend > 0 && phone ? `<div class="btn-row" style="margin-top:var(--s4)">
         <a class="btn btn-secondary" href="tel:+${esc(phone)}">${icon('phone', 18)}${tr('Call', 'कॉल')}</a>
         <a class="btn btn-wa" href="${esc(reminderLink(ev, pend))}" target="_blank" rel="noopener">${icon('message', 18)}${tr('Remind', 'आठवण')}</a>
@@ -753,10 +815,24 @@ function expenseRow(x, { showEvent = true } = {}) {
     </div>
     <div class="row-end">
       <div class="amt-sm">${fmtCurrency(x.amt)}</div>
-      ${isOnCredit(x) ? `<span class="chip due">${tr('Credit', 'उधार')}</span>` : ''}
+      ${creditChip(x)}
     </div>
     <button type="button" class="del-btn" data-action="delete" data-type="expenses" data-id="${esc(x.id)}" aria-label="Delete expense">${icon('trash', 16)}</button>
   </div>`;
+}
+
+// Credit status on an expense row: paid off, overdue, due on a date, or just "credit"
+function creditChip(x) {
+  if (!isOnCredit(x)) return '';
+  const left = CREDIT_LEFT.get(x.id) || 0;
+  if (left <= 0) return `<span class="chip pos">${tr('Credit paid', 'उधार फेडले')}</span>`;
+  if (x.dueDate) {
+    const d = daysUntil(x.dueDate);
+    if (d < 0)  return `<span class="chip neg">${tr(`Overdue ${-d}d`, `${-d} दिवस थकीत`)}</span>`;
+    if (d === 0) return `<span class="chip neg">${tr('Due today', 'आज द्यायचे')}</span>`;
+    return `<span class="chip due">${tr(`Due ${fmtDate(x.dueDate).slice(0, 6)}`, `${fmtDate(x.dueDate).slice(0, 6)} पर्यंत`)}</span>`;
+  }
+  return `<span class="chip due">${tr('Credit', 'उधार')}</span>`;
 }
 
 function vendorDuesTotal() {
@@ -854,6 +930,7 @@ function rVen() {
 /* ── VENDOR DETAIL ───────────────────────────────── */
 function showVenDetail(id, { fromHistory = false } = {}) {
   const vn = D.vendors.find(v => v.id === id); if (!vn) return;
+  refreshCredit();
   const exps = D.expenses.filter(x => x.venId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
   const pays = D.vPays.filter(p => p.venId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
   const bal = calcVendorBalance(id, D.expenses, D.vPays);
@@ -909,6 +986,39 @@ function showVenDetail(id, { fromHistory = false } = {}) {
 }
 
 /* ── REPORTS ─────────────────────────────────────── */
+// Cost and profit per plate: by event type (what to quote next time), then per event.
+// Only events with a guest count and recorded costs count.
+function perPlateReport(P, missing) {
+  const rows = P.events
+    .map(ev => ({ ev, ...calcEventPL(ev, P.cPays, P.expenses) }))
+    .filter(r => r.guests && !missing.has(r.ev.id) && r.expTotal > 0);
+  if (!rows.length) {
+    return `<div class="card pad"><div class="chart-title">${icon('utensils', 18)}Per plate – प्रति ताट</div>
+      <div class="meta">${tr('Add a guest count to your events to see cost and profit per plate here.', 'प्रति ताट खर्च पाहण्यासाठी कार्यक्रमात पाहुण्यांची संख्या जोडा.')}</div></div>`;
+  }
+  const byType = new Map();
+  rows.forEach(r => {
+    const t = (r.ev.type || 'Other').split(' – ')[0];
+    const g = byType.get(t) || { n: 0, guests: 0, cost: 0, bill: 0 };
+    g.n++; g.guests += r.guests; g.cost += r.expTotal; g.bill += r.ev.billing;
+    byType.set(t, g);
+  });
+  const typeRows = [...byType].sort((a, b) => b[1].n - a[1].n).map(([t, g]) => `
+    <div class="row" style="min-height:52px">
+      <div class="row-body"><div class="title-sm">${esc(t)}</div><div class="meta">${tr(`${g.n} event${g.n > 1 ? 's' : ''} · avg bill ${fmtCurrency(Math.round(g.bill / g.guests))}/plate`, `${g.n} कार्यक्रम · सरासरी बिल ${fmtCurrency(Math.round(g.bill / g.guests))}/ताट`)}</div></div>
+      <div class="row-end"><div class="amt-sm">${fmtCurrency(Math.round(g.cost / g.guests))}</div><div class="meta">${tr('cost/plate', 'खर्च/ताट')}</div></div>
+    </div>`).join('');
+  const eventRows = rows.sort((a, b) => b.profitPerPlate - a.profitPerPlate).map(r => `
+    <div class="row" role="button" tabindex="0" data-action="evdetail" data-id="${esc(r.ev.id)}" style="min-height:52px">
+      <div class="row-body"><div class="title-sm trunc" data-nl>${esc(r.ev.name)}</div><div class="meta">${tr(`${r.guests} plates · cost ${fmtCurrency(r.costPerPlate)}/plate`, `${r.guests} ताट · खर्च ${fmtCurrency(r.costPerPlate)}/ताट`)}</div></div>
+      <div class="row-end"><div class="amt-sm ${r.profitPerPlate >= 0 ? 'pos' : 'neg'}">${fmtCurrency(r.profitPerPlate)}</div><div class="meta">${tr('profit/plate', 'नफा/ताट')}</div></div>
+    </div>`).join('');
+  return `<div class="card pad" style="padding-bottom:var(--s2)">
+    <div class="chart-title">${icon('utensils', 18)}Per plate by type – प्रकारानुसार प्रति ताट</div>${typeRows}
+    <div class="chart-title" style="margin-top:var(--s4)">${icon('calendar', 18)}Per plate by event – कार्यक्रमनिहाय</div>${eventRows}
+  </div>`;
+}
+
 function rSummary() {
   renderPeriodSegs();
   const P = sliceByPeriod(D, period);
@@ -966,6 +1076,7 @@ function rSummary() {
     ${missing.size ? `<div class="card" style="margin-top:var(--s3)"><div class="note alert"><span class="note-ic">${icon('receipt', 16)}</span>
       <div>${tr(`${missing.size} event${missing.size > 1 ? 's have' : ' has'} no expenses, so profit here is overstated.`, `${missing.size} कार्यक्रमांचा खर्च नोंदवलेला नाही, त्यामुळे नफा जास्त दिसतो.`)}</div></div></div>` : ''}
     <div class="sec"></div>
+    ${perPlateReport(P, missing)}
     <div class="card pad"><div class="chart-title">${icon('calendar', 18)}Profit by event – कार्यक्रमनिहाय नफा</div>${plRows}</div>
     <div class="card pad"><div class="chart-title">${icon('receipt', 18)}Spending by category – खर्चाचे प्रकार</div>${catBars}</div>
     <div class="card pad"><div class="chart-title">${icon('wallet', 18)}Collections by mode – पद्धतीनुसार वसुली</div>${modeRows}</div>
@@ -1048,6 +1159,8 @@ function openEvModal(id) {
   q('ev-venue').value   = ev?.venue   || '';
   q('ev-billing').value = ev?.billing || '';
   q('ev-mobile').value  = ev?.mobile  || '';
+  q('ev-guests').value  = ev?.guests  || '';
+  q('ev-budget').value  = ev?.budget  || '';
   q('ev-notes').value   = ev?.notes   || '';
   populateSelect('ev-type', EVENT_TYPES, ev?.type || '');
   q('ev-mtitle').textContent = ev ? 'Edit event – संपादित करा' : 'New event – नवीन कार्यक्रम';
@@ -1076,6 +1189,8 @@ async function saveEvent() {
     venue:    data.venue,
     billing:  data.billing,
     mobile:   data.mobile,
+    guests:   Math.max(0, parseInt(qv('ev-guests'), 10) || 0),
+    budget:   Math.max(0, qf('ev-budget') || 0),
     notes:    qv('ev-notes'),
     photoIds: id ? (D.events.find(e => e.id === id)?.photoIds || []) : [],
     _v: 2
@@ -1111,11 +1226,31 @@ function setExpCat(cat, head = '') {
   populateSelect('exp-head', EXPENSE_HEADS[cat] || [], head);
 }
 
+function setExpDue(date) {
+  q('exp-due').value = date || '';
+  const days = date ? daysUntil(date) : '';
+  q('exp-due-chips').querySelectorAll('[data-due]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.due === '' ? !date : Number(b.dataset.due) === days)));
+}
+
+// One line under the event picker: how much this event has cost so far, against its budget
+function updateExpEvHint() {
+  const ev = D.events.find(e => e.id === qv('exp-ev'));
+  if (!ev) { q('exp-ev-hint').textContent = ''; return; }
+  const pl = calcEventPL(ev, D.cPays, D.expenses);
+  let text = `Spent so far ${fmtCurrency(pl.expTotal)}`;
+  if (pl.budget) text += ` of ${fmtCurrency(pl.budget)} budget (${pl.budgetUsed}%)`;
+  if (pl.costPerPlate !== null) text += ` · ${fmtCurrency(pl.costPerPlate)}/plate`;
+  q('exp-ev-hint').textContent = text;
+  q('exp-ev-hint').className = 'meta' + (pl.budget && pl.overBudget > 0 ? ' neg' : '');
+}
+
 function setExpPay(pay) {
   q('exp-pay').dataset.value = pay;
   q('exp-pay').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.pay === pay)));
   const credit = pay === 'credit';
   q('exp-mode-field').hidden = credit;
+  q('exp-due-field').hidden = !credit;
   q('exp-vendor-lbl').innerHTML = credit
     ? 'Owed to – कोणाला देणे <span class="req">*</span>'
     : 'Vendor – विक्रेता';
@@ -1147,6 +1282,8 @@ function openExpModal(arg) {
   populateVendorSelect(ex?.venId || '');
   setExpPay(ex ? (isOnCredit(ex) ? 'credit' : 'paid') : 'paid');
   q('exp-date').value  = ex?.date || today();
+  setExpDue(ex?.dueDate || '');
+  updateExpEvHint();
   q('exp-notes').value = ex?.notes || '';
   q('exp-mtitle').textContent = ex?.draft ? 'Fill in bill – बिल भरा'
                               : ex ? 'Edit expense – संपादित करा' : 'Record expense – खर्च नोंदवा';
@@ -1255,6 +1392,7 @@ async function saveExpense({ next = false } = {}) {
     pay,
     mode:  pay === 'paid' ? qv('exp-mode') : '',
     venId,
+    dueDate: pay === 'credit' ? qv('exp-due') : '',
     notes: qv('exp-notes'),
     billIds: expWork.bills.map(b => b.id)
   };
@@ -1269,18 +1407,26 @@ async function saveExpense({ next = false } = {}) {
   writePref('ffv2_lastexp', { cat: record.cat, head: record.head, mode: record.mode || readPref('ffv2_lastexp', {}).mode });
 
   refreshCurrent();
+
+  // Say so the moment an entry pushes the event past its expected cost
+  const ev = D.events.find(e => e.id === record.evId);
+  const pl = ev ? calcEventPL(ev, D.cPays, D.expenses) : null;
+  const over = pl && pl.budget && pl.overBudget > 0
+    ? `${ev.name} is ${fmtCurrency(pl.overBudget)} over budget – बजेटपेक्षा जास्त` : '';
+
   if (next) {
     // Keep the event, date, category and payment; clear what changes per entry
     q('exp-amt').value = '';
     q('exp-notes').value = '';
     clearFieldErrors();
     startExpSession(null);
+    updateExpEvHint();
     q('exp-amt').focus({ preventScroll: true });
-    showToast(`Saved ${fmtCurrency(record.amt)} · add the next – पुढील खर्च`);
+    showToast(over ? `Saved · ${over}` : `Saved ${fmtCurrency(record.amt)} · add the next – पुढील खर्च`, over ? 'error' : 'success');
     return;
   }
   closeModals();
-  showToast(`Expense saved – खर्च नोंदवला`);
+  showToast(over ? `Saved · ${over}` : `Expense saved – खर्च नोंदवला`, over ? 'error' : 'success');
 }
 
 /* ── CLIENT PAYMENT SHEET ────────────────────────── */
@@ -1693,6 +1839,7 @@ function bindAllEvents() {
       case 'bill-gal':     billTarget = 'sheet'; q('bill-gal').click(); break;
       case 'bill-view':    viewBill(id); break;
       case 'fill-draft':   openExpModal(D.drafts.find(d => d.id === id)); break;
+      case 'open-ev-edit': openEvModal(curRef); break;
       case 'delete':       await deleteRow(el.dataset.type, id); break;
       case 'export':       exportData(); break;
       case 'period':       period = id; writePref('ffv2_period', id); renderPage(CT); break;
@@ -1760,6 +1907,12 @@ function bindAllEvents() {
   q('exp-pay').addEventListener('click', e => {
     const b = e.target.closest('[data-pay]'); if (b) setExpPay(b.dataset.pay);
   });
+  q('exp-due-chips').addEventListener('click', e => {
+    const b = e.target.closest('[data-due]'); if (!b) return;
+    setExpDue(b.dataset.due === '' ? '' : addDays(today(), Number(b.dataset.due)));
+  });
+  q('exp-due').addEventListener('change', e => setExpDue(e.target.value));
+  q('exp-ev').addEventListener('change', updateExpEvHint);
   q('exp-vendor').addEventListener('change', e => {
     if (e.target.value !== '__new') { e.target.dataset.prev = e.target.value; return; }
     e.target.value = e.target.dataset.prev || '';

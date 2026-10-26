@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="dark" data-lang="both">
+<html lang="en" class="dark" data-lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -95,8 +95,8 @@
     <div class="d-group">
       <span class="label">Language – भाषा</span>
       <div class="seg" role="group" aria-label="Language">
-        <button type="button" data-lang-set="both" aria-pressed="false">Both</button>
         <button type="button" data-lang-set="en" aria-pressed="false">English</button>
+        <button type="button" data-lang-set="both" aria-pressed="false">Both</button>
         <button type="button" data-lang-set="mr" aria-pressed="false" lang="mr">मराठी</button>
       </div>
     </div>
@@ -231,7 +231,11 @@
       <div class="field"><label for="ev-billing">Total bill ₹ – एकूण बिल <span class="req">*</span></label><input type="number" id="ev-billing" placeholder="0" min="1" inputmode="decimal" enterkeyhint="next"></div>
       <div class="field"><label for="ev-mobile">Client mobile – मोबाईल</label><input type="tel" id="ev-mobile" placeholder="9XXXXXXXXX" enterkeyhint="next"></div>
     </div>
-    <div class="field"><label for="ev-notes">Notes – नोंदी</label><textarea id="ev-notes" placeholder="Menu, guest count, special requests…"></textarea></div>
+    <div class="f2">
+      <div class="field"><label for="ev-guests">Guests / plates – पाहुणे</label><input type="number" id="ev-guests" placeholder="e.g. 300" min="1" inputmode="numeric" enterkeyhint="next"></div>
+      <div class="field"><label for="ev-budget">Expected cost ₹ – अंदाजे खर्च</label><input type="number" id="ev-budget" placeholder="optional" min="1" inputmode="decimal" enterkeyhint="next"></div>
+    </div>
+    <div class="field"><label for="ev-notes">Notes – नोंदी</label><textarea id="ev-notes" placeholder="Menu, special requests…"></textarea></div>
     <div class="s-foot"><button type="button" class="btn btn-primary" id="btn-save-event">Save event – जतन करा</button></div>
   </div>
 </div>
@@ -257,10 +261,22 @@
     </div>
     <div class="field"><label>Category – प्रकार</label><div class="cat-chips" id="exp-cats" role="group" aria-label="Category"></div><input type="hidden" id="exp-cat"></div>
     <div class="field"><label for="exp-head">For – कशासाठी</label><select id="exp-head"></select></div>
-    <div class="field"><label for="exp-ev">Event – कार्यक्रम <span class="req">*</span></label><select id="exp-ev"></select></div>
+    <div class="field"><label for="exp-ev">Event – कार्यक्रम <span class="req">*</span></label><select id="exp-ev"></select>
+      <div class="meta" id="exp-ev-hint" data-nl style="margin-top:6px"></div></div>
     <div class="f2">
       <div class="field"><label for="exp-vendor" id="exp-vendor-lbl">Vendor – विक्रेता</label><select id="exp-vendor"></select></div>
       <div class="field" id="exp-mode-field"><label for="exp-mode">Paid by – पद्धत</label><select id="exp-mode"></select></div>
+    </div>
+    <!-- Only for credit, and optional: a pay-by date puts it on Home's "Pay vendors" list -->
+    <div class="field" id="exp-due-field" hidden>
+      <label for="exp-due">Pay by – कधीपर्यंत द्यायचे</label>
+      <div class="chips-row" id="exp-due-chips" style="margin:0 0 var(--s2);padding:0">
+        <button type="button" class="f-chip" data-due="">No date</button>
+        <button type="button" class="f-chip" data-due="7">1 week</button>
+        <button type="button" class="f-chip" data-due="15">15 days</button>
+        <button type="button" class="f-chip" data-due="30">1 month</button>
+      </div>
+      <input type="date" id="exp-due">
     </div>
     <div class="f2">
       <div class="field"><label for="exp-date">Date – दिनांक <span class="req">*</span></label><input type="date" id="exp-date"></div>
