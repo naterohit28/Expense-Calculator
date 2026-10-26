@@ -43,7 +43,7 @@ export const CAT_ICONS = {
 };
 
 export const EVENT_TYPES = [
-  'Wedding – लग्न','Reception – स्वागत समारंभ','Haldi – हळद',
+  'Wedding – लग्न','Engagement – साखरपुडा','Reception – स्वागत समारंभ','Haldi – हळद',
   'Birthday – वाढदिवस','Corporate – कॉर्पोरेट','Other – इतर'
 ];
 
@@ -54,8 +54,21 @@ export function uid(prefix = 'id') {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
 }
 
+// Local date, not UTC — toISOString() returns yesterday before 05:30 IST
 export function today() {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function daysSince(d) {
+  if (!d) return 0;
+  return Math.floor((new Date(today()) - new Date(d)) / 86400000);
+}
+
+/* ── HTML ESCAPING ───────────────────────────────── */
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+export function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ESC[c]);
 }
 
 export function fmtDate(d) {
@@ -66,7 +79,8 @@ export function fmtDate(d) {
 }
 
 export function fmtCurrency(n) {
-  return '₹' + Number(n || 0).toLocaleString('en-IN');
+  const v = Number(n || 0);
+  return (v < 0 ? '-₹' : '₹') + Math.abs(v).toLocaleString('en-IN');
 }
 
 /* ── VALIDATION ──────────────────────────────────── */
@@ -165,14 +179,69 @@ export function calcEventPL(ev, cPays, expenses) {
   return { received, expTotal, pending, profit, margin, pctPaid };
 }
 
+/* An expense is either paid on the spot (pay: 'paid') or taken on credit from
+   its vendor (pay: 'credit'). Older records have no `pay` field; a vendor-linked
+   one was always treated as owed, so it stays credit. */
+export function isOnCredit(x) {
+  return x.pay ? x.pay === 'credit' : !!x.venId;
+}
+
 export function calcVendorBalance(vendorId, expenses, vPays) {
-  const credited = expenses.filter(x => x.venId === vendorId).reduce((s, x) => s + (x.amt || 0), 0);
-  const paid     = vPays.filter(p => p.venId === vendorId).reduce((s, p) => s + (p.amt || 0), 0);
-  return { credited, paid, balance: credited - paid };
+  const mine     = expenses.filter(x => x.venId === vendorId);
+  const pays     = vPays.filter(p => p.venId === vendorId);
+  const supplied = mine.reduce((s, x) => s + (x.amt || 0), 0);
+  const credit   = mine.filter(isOnCredit).reduce((s, x) => s + (x.amt || 0), 0);
+  const paidNow  = supplied - credit;
+  const paid     = paidNow + pays.reduce((s, p) => s + (p.amt || 0), 0);
+  return {
+    supplied, credit, paid,
+    credited: supplied,              // kept for older callers
+    balance: credit - (paid - paidNow),
+    entries: mine.length + pays.length
+  };
+}
+
+/* ── PERIODS ─────────────────────────────────────── */
+export const PERIODS = {
+  month: 'This month – हा महिना',
+  '3m':  '3 months – ३ महिने',
+  fy:    'This FY – हे आर्थिक वर्ष',
+  all:   'All time – सर्व'
+};
+
+// Start date (YYYY-MM-DD) of a period, or '' for all time. FY runs April–March.
+export function periodStart(period) {
+  const d = new Date(today());
+  const y = d.getFullYear(), m = d.getMonth();
+  const iso = (yy, mm) => `${yy}-${String(mm + 1).padStart(2, '0')}-01`;
+  if (period === 'month') return iso(y, m);
+  if (period === '3m')    { const s = new Date(y, m - 2, 1); return iso(s.getFullYear(), s.getMonth()); }
+  if (period === 'fy')    return iso(m >= 3 ? y : y - 1, 3);
+  return '';
+}
+
+// Events dated in the period, plus the payments and expenses that belong to them
+export function sliceByPeriod(D, period) {
+  const start = periodStart(period);
+  if (!start) return D;
+  const events = D.events.filter(e => (e.date || '') >= start);
+  const ids = new Set(events.map(e => e.id));
+  return {
+    ...D, events,
+    expenses: D.expenses.filter(x => ids.has(x.evId)),
+    cPays:    D.cPays.filter(p => ids.has(p.evId))
+  };
+}
+
+// Past events with no expense recorded — their profit figure is not real yet
+export function eventsMissingCosts(events, expenses) {
+  const withCosts = new Set(expenses.map(x => x.evId));
+  return events.filter(e => isOverdue(e) && !withCosts.has(e.id))
+               .sort((a, b) => b.date.localeCompare(a.date));
 }
 
 /* ── INSIGHTS ────────────────────────────────────── */
-export function generateInsights(events, cPays, expenses, vendors) {
+export function generateInsights(events, cPays, expenses, vendors, vPays = []) {
   if (!events.length) return [];
   const insights = [];
 
@@ -181,95 +250,115 @@ export function generateInsights(events, cPays, expenses, vendors) {
     ...calcEventPL(ev, cPays, expenses)
   }));
 
-  // Best profit event
-  const best = evPL.reduce((a, b) => a.profit > b.profit ? a : b, evPL[0]);
-  if (best.profit > 0) {
-    insights.push({ type: 'success', icon: '🏆', text: `Best event: ${best.ev.name} with ${fmtCurrency(best.profit)} profit – नफा` });
+  // Each insight carries an English and a Marathi sentence (HTML-escaped; <b> marks names/amounts)
+  const b = t => `<b>${t}</b>`;
+
+  // Costing gaps first — without expenses an event's profit is overstated
+  const missing = eventsMissingCosts(events, expenses);
+  if (missing.length) {
+    insights.push({ type: 'alert', icon: 'receipt',
+      en: `${b(missing.length)} past event${missing.length > 1 ? 's have' : ' has'} no expenses recorded — profit is overstated`,
+      mr: `${b(missing.length)} मागील कार्यक्रमांचा खर्च नोंदवलेला नाही — नफा जास्त दिसतो` });
   }
 
-  // Worst (loss-making) events
-  const losses = evPL.filter(r => r.profit < 0).sort((a, b) => a.profit - b.profit).slice(0, 3);
+  // Best profit event (only among events that have costs, or the "best" is just the uncosted one)
+  const costed = evPL.filter(r => !missing.some(m => m.id === r.ev.id));
+  const best = costed.length ? costed.reduce((a, c) => a.profit > c.profit ? a : c, costed[0]) : null;
+  if (best && best.profit > 0) {
+    const n = b(esc(best.ev.name)), amt = b(fmtCurrency(best.profit));
+    insights.push({ type: 'success', icon: 'trophy',
+      en: `Best event: ${n} with ${amt} profit`,
+      mr: `सर्वोत्तम कार्यक्रम: ${n} — ${amt} नफा` });
+  }
+
+  // Loss-making events
+  const losses = evPL.filter(r => r.profit < 0).sort((a, c) => a.profit - c.profit).slice(0, 3);
   if (losses.length) {
-    insights.push({ type: 'warning', icon: '⚠️', text: `${losses.length} loss-making event${losses.length > 1 ? 's' : ''}: ${losses.map(r => r.ev.name).join(', ')}` });
+    const names = losses.map(r => b(esc(r.ev.name))).join(', ');
+    insights.push({ type: 'alert', icon: 'warn',
+      en: `${losses.length} event${losses.length > 1 ? 's' : ''} made a loss: ${names}`,
+      mr: `तोट्यातील कार्यक्रम (${losses.length}): ${names}` });
   }
 
   // Highest expense category
   const byCat = {};
   expenses.forEach(x => { byCat[x.cat] = (byCat[x.cat] || 0) + x.amt; });
-  const topCat = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
+  const topCat = Object.entries(byCat).sort((a, c) => c[1] - a[1])[0];
   if (topCat) {
-    insights.push({ type: 'info', icon: '💸', text: `Highest expense: ${topCat[0]} at ${fmtCurrency(topCat[1])} – सर्वाधिक खर्च` });
+    const amt = b(fmtCurrency(topCat[1]));
+    insights.push({ type: 'info', icon: 'chart',
+      en: `Biggest cost: ${b(esc(topCat[0]))} at ${amt}`,
+      mr: `सर्वाधिक खर्च: ${b(esc(topCat[0]))} — ${amt}` });
   }
 
-  // Overdue collections
-  const overdue = evPL.filter(r => r.pending > 0);
+  // Overdue collections — only events whose date has passed
+  const overdue = evPL.filter(r => r.pending > 0 && isOverdue(r.ev));
   if (overdue.length) {
-    const totalPending = overdue.reduce((s, r) => s + r.pending, 0);
-    insights.push({ type: 'alert', icon: '🔴', text: `${overdue.length} event${overdue.length > 1 ? 's' : ''} with pending: ${fmtCurrency(totalPending)} – थकीत रक्कम` });
+    const amt = b(fmtCurrency(overdue.reduce((s, r) => s + r.pending, 0)));
+    insights.push({ type: 'alert', icon: 'alert',
+      en: `${amt} overdue from ${overdue.length} event${overdue.length > 1 ? 's' : ''}`,
+      mr: `${overdue.length} कार्यक्रमांची ${amt} थकीत वसुली` });
   }
 
-  // Vendor balance warning
+  // Vendor dues — net of payments made; advances to one vendor don't offset dues to another
   const totalVenBal = vendors.reduce((s, v) => {
-    const { balance } = calcVendorBalance(v.id, expenses, []);
-    return s + balance;
+    const { balance } = calcVendorBalance(v.id, expenses, vPays);
+    return s + Math.max(0, balance);
   }, 0);
   if (totalVenBal > 0) {
-    insights.push({ type: 'warning', icon: '🤝', text: `Vendor dues: ${fmtCurrency(totalVenBal)} unpaid – विक्रेत्यांची थकबाकी` });
+    const amt = b(fmtCurrency(totalVenBal));
+    insights.push({ type: 'warning', icon: 'store',
+      en: `You owe vendors ${amt}`,
+      mr: `विक्रेत्यांची थकबाकी: ${amt}` });
   }
 
   return insights;
 }
 
+// An event's balance is overdue once the event date has passed
+export function isOverdue(ev) {
+  return daysSince(ev.date) > 0;
+}
+
 /* ── PIN HELPERS ─────────────────────────────────── */
-export function hashPin(pin) {
-  // Simple obfuscation — not cryptographic, but sufficient for a personal offline app
+// Old format (v2.0): a 32-bit string hash. Kept only to verify PINs set before v2.1.
+function legacyHash(pin) {
   let h = 0;
   for (let i = 0; i < pin.length; i++) {
-    const char = pin.charCodeAt(i);
-    h = ((h << 5) - h) + char;
+    h = ((h << 5) - h) + pin.charCodeAt(i);
     h = h & h;
   }
   return `ffpin_${Math.abs(h).toString(36)}_${pin.length}`;
 }
 
-export function verifyPin(input, stored) {
-  return hashPin(String(input)) === stored;
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Salted SHA-256, stored as "sha256$<salt>$<hex>". A 4-digit PIN is still guessable
+// offline by someone with the device's storage; this stops casual reading of the hash.
+export async function hashPin(pin) {
+  if (!crypto?.subtle) return legacyHash(pin); // non-secure context (e.g. file://)
+  const salt = [...crypto.getRandomValues(new Uint8Array(8))].map(b => b.toString(16).padStart(2, '0')).join('');
+  return `sha256$${salt}$${await sha256Hex(salt + pin)}`;
+}
+
+export async function verifyPin(input, stored) {
+  if (!stored) return false;
+  if (stored.startsWith('sha256$')) {
+    const [, salt, hex] = stored.split('$');
+    return crypto?.subtle ? (await sha256Hex(salt + String(input))) === hex : false;
+  }
+  return legacyHash(String(input)) === stored;
+}
+
+export function isLegacyPinHash(stored) {
+  return !!stored && !stored.startsWith('sha256$');
 }
 
 /* ── SEED DATA ───────────────────────────────────── */
-export const SEED_DATA = {
-  events: [
-    {id:'55edf39a',name:'Christ Church Reception',date:'2026-02-07',type:'Reception',venue:'Christ Church',billing:352000,mobile:'',notes:'',photoIds:[],_v:2},
-    {id:'29ec4d7f',name:'Dadar Haldi',            date:'2026-02-04',type:'Haldi',    venue:'Dadar',        billing:15000, mobile:'',notes:'',photoIds:[],_v:2},
-    {id:'f4412317',name:'Lohar Wadi Wedding',     date:'2026-02-05',type:'Wedding',  venue:'Lohar Wadi',   billing:500000,mobile:'918104334307',notes:'',photoIds:[],_v:2},
-    {id:'c335c282',name:'Manav Seva Birthday',    date:'2026-02-14',type:'Birthday', venue:'Manav Seva',   billing:56000, mobile:'918104334307',notes:'',photoIds:[],_v:2}
-  ],
-  cPays: [
-    {id:'b01efcb8',evId:'55edf39a',amt:327000,date:'2026-02-11',mode:'Cash',notes:''},
-    {id:'1b6707f6',evId:'55edf39a',amt:25000, date:'2026-02-20',mode:'Cash',notes:''},
-    {id:'22b27a5d',evId:'29ec4d7f',amt:15000, date:'2026-02-20',mode:'Cash',notes:''},
-    {id:'d3f6b20d',evId:'f4412317',amt:200000,date:'2026-02-01',mode:'Cash',notes:''},
-    {id:'6c8598b6',evId:'f4412317',amt:100000,date:'2026-02-05',mode:'UPI', notes:''},
-    {id:'09890e1b',evId:'f4412317',amt:100000,date:'2026-02-05',mode:'Cash',notes:''},
-    {id:'b62fd4a4',evId:'f4412317',amt:50000, date:'2026-02-18',mode:'Cash',notes:''},
-    {id:'a1cbd955',evId:'f4412317',amt:50000, date:'2026-02-18',mode:'UPI', notes:''},
-    {id:'c335pay1',evId:'c335c282',amt:56000, date:'2026-02-14',mode:'Cash',notes:''}
-  ],
-  expenses: [
-    {id:'f80e382a',evId:'55edf39a',cat:'Operations',  head:'Transport – वाहतूक',amt:3600, date:'2026-02-07',mode:'Cash',notes:'Tempo fare',     venId:''},
-    {id:'e67e27cb',evId:'55edf39a',cat:'Operations',  head:'Water – पाणी',       amt:5000, date:'2026-02-07',mode:'UPI', notes:'',              venId:''},
-    {id:'bbb1d027',evId:'29ec4d7f',cat:'Raw Material',head:'Bread – ब्रेड',      amt:600,  date:'2026-02-04',mode:'Cash',notes:'Chapati 150',   venId:''},
-    {id:'7a44d5b2',evId:'29ec4d7f',cat:'Operations',  head:'Transport – वाहतूक',amt:964,  date:'2026-02-04',mode:'UPI', notes:'Thane to Dadar',venId:''},
-    {id:'exp00005',evId:'29ec4d7f',cat:'Operations',  head:'Transport – वाहतूक',amt:1278, date:'2026-02-04',mode:'UPI', notes:'Dadar to Thane',venId:''},
-    {id:'exp00006',evId:'29ec4d7f',cat:'Admin',       head:'Commission',          amt:10000,date:'2026-02-26',mode:'Cash',notes:'Satish Nate',  venId:'5292e26a'},
-    {id:'exp00007',evId:'f4412317',cat:'Labour',      head:'Cook – स्वयंपाकी',   amt:25000,date:'2026-02-05',mode:'Cash',notes:'Head cook',    venId:''},
-    {id:'exp00008',evId:'f4412317',cat:'Raw Material',head:'Grocery – किराणा',   amt:18000,date:'2026-02-05',mode:'Cash',notes:'',             venId:''},
-    {id:'exp00009',evId:'c335c282',cat:'Live Counter',head:'Chaat – चाट',         amt:8000, date:'2026-02-14',mode:'Cash',notes:'',             venId:'5292e26a'}
-  ],
-  vendors: [
-    {id:'5292e26a',name:'Sajid Juice',cat:'Live Counter',specialty:'Juice – ज्यूस',phone:'',notes:''}
-  ],
-  vPays: [
-    {id:'950b615d',venId:'5292e26a',evId:'55edf39a',cat:'Live Counter',head:'Juice – ज्यूस',amt:15000,date:'2026-04-02',mode:'Cash',notes:''}
-  ]
-};
+// The app starts empty. Business records never ship in the code: it is published
+// online. The original starting records are kept outside the app folder as an
+// importable backup (flavor-fusion-starting-data.json).
+export const SEED_DATA = { events: [], cPays: [], expenses: [], vendors: [], vPays: [] };

@@ -6,7 +6,7 @@
  */
 
 const DB_NAME    = 'FlavorFusionDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;   // v3: photos indexed by eventId
 const STORES     = ['events','expenses','vendors','cPays','vPays','photos','meta'];
 
 let _db = null;
@@ -24,6 +24,9 @@ export function openDB() {
           db.createObjectStore(name, { keyPath: 'id' });
         }
       });
+      // Opening an event used to read every photo in the app; the index reads only its own
+      const photos = e.target.transaction.objectStore('photos');
+      if (!photos.indexNames.contains('eventId')) photos.createIndex('eventId', 'eventId');
     };
 
     req.onsuccess = e => { _db = e.target.result; resolve(_db); };
@@ -112,8 +115,12 @@ export async function savePhoto(eventId, dataUrl) {
 }
 
 export async function getPhotosForEvent(eventId) {
-  const all = await getAll('photos');
-  return all.filter(p => p.eventId === eventId);
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('photos', 'readonly').objectStore('photos').index('eventId').getAll(eventId);
+    req.onsuccess = () => resolve((req.result || []).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')));
+    req.onerror   = () => reject(req.error);
+  });
 }
 
 export async function deletePhoto(photoId) {

@@ -1,37 +1,104 @@
 /**
  * app.js — Flavor Fusion v2
- * UI logic: rendering, modals, navigation, events
- * Imports from db.js and utils.js
+ * UI logic: rendering, sheets, navigation, events
+ * Imports from db.js, utils.js, icons.js and i18n.js
  */
 
 import {
-  openDB, getAll, getOne, putOne, deleteOne, getMeta, setMeta,
+  getAll, putOne, deleteOne, getMeta, setMeta,
   savePhoto, getPhotosForEvent, deletePhoto,
-  exportAllData, importAllData, checkAndMigrate, APP_VERSION
+  exportAllData, importAllData, checkAndMigrate
 } from './db.js';
 
 import {
-  EXPENSE_HEADS, CAT_ICONS, EVENT_TYPES, PAY_MODES, SEED_DATA,
-  uid, today, fmtDate, fmtCurrency,
+  EXPENSE_HEADS, EVENT_TYPES, PAY_MODES, SEED_DATA, PERIODS,
+  uid, today, daysSince, fmtDate, fmtCurrency, esc,
   validate, EVENT_RULES, EXPENSE_RULES, PAYMENT_RULES, VENDOR_RULES, VPAY_RULES,
-  calcEventReceived, calcEventExpenses, calcEventPL, calcVendorBalance,
-  generateInsights, hashPin, verifyPin
+  calcEventReceived, calcEventPL, calcVendorBalance, isOnCredit,
+  sliceByPeriod, eventsMissingCosts,
+  generateInsights, isOverdue, hashPin, verifyPin, isLegacyPinHash
 } from './utils.js';
+
+import { icon, hydrateIcons, CAT_ICON } from './icons.js';
+import { initLang, getLang, setLang } from './i18n.js';
 
 /* ── STATE ───────────────────────────────────────── */
 let D = { events: [], expenses: [], vendors: [], cPays: [], vPays: [] };
 let CT = 'home';
+let curRef = null;          // id shown on a detail page (event / vendor)
+let launched = false;
 let pendingPhotoEvId = null;
 let lightboxState    = { evId: null, photoIds: [], idx: 0 };
 let pinBuffer        = '';
+let pinFails = 0, pinLockedUntil = 0;
+let lastExport = null;      // ISO time of the last backup export
+let pickVendorForExpense = null;  // set while "+ New vendor" is opened from the expense sheet
+
+// List filters (kept while the app is open)
+const F = { evQ: '', ev: 'all', expQ: '', exp: 'all', venQ: '' };
+let period = 'all';
+
+/* ── SMALL HELPERS ───────────────────────────────── */
+function q(id)  { return document.getElementById(id); }
+function qv(id) { return q(id).value.trim(); }
+function qf(id) { return parseFloat(q(id).value); }
+
+// A phrase in both languages, shown per the language setting (see i18n.js)
+function tr(en, mr) { return `<span class="t-en">${en}</span><span class="t-mr">${mr}</span>`; }
+// Same, from a stored "English – मराठी" pair
+function trPair(pair) { const [en, mr] = pair.split(' – '); return mr ? tr(en, mr) : pair; }
+
+function catIcon(cat, size = 18) { return icon(CAT_ICON[cat] || 'receipt', size); }
+
+function initials(name) {
+  return String(name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase();
+}
+
+function emptyState({ ic, text, action, tone = '', compact = false }) {
+  return `<div class="empty${compact ? ' compact' : ''}">
+    <div class="empty-ic ${tone}">${icon(ic, 26)}</div>
+    <div class="empty-tx">${text}</div>
+    ${action || ''}
+  </div>`;
+}
+
+function rowsOrEmpty(rows, text) {
+  return rows || `<div class="list-empty">${text}</div>`;
+}
+
+function readPref(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+}
+function writePref(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
+
+function matches(query, ...fields) {
+  if (!query) return true;
+  const hay = fields.join(' ').toLowerCase();
+  return query.toLowerCase().split(/\s+/).every(w => hay.includes(w));
+}
+
+// Indian mobile → digits for tel:/wa.me (10-digit numbers get the 91 country code)
+function phoneDigits(p) {
+  const d = String(p || '').replace(/\D/g, '');
+  return d.length === 10 ? '91' + d : d;
+}
 
 /* ── BOOT ────────────────────────────────────────── */
 async function boot() {
+  hydrateIcons();
+  initTheme();
+  initLang();
+  syncSettingsUI();
+  period = readPref('ffv2_period', 'all');
+  if (!PERIODS[period]) period = 'all';
   showLoading(true);
   try {
     await checkAndMigrate();
     await loadAll();
     await seedIfEmpty();
+    lastExport = await getMeta('last_export');
 
     const pin = await getMeta('pin_hash');
     if (pin) {
@@ -69,75 +136,97 @@ async function seedIfEmpty() {
 }
 
 function launchApp() {
+  if (launched) return;   // setting a PIN later must not re-bind every listener
+  launched = true;
   bindAllEvents();
-  initTheme();
-  go('home');
+  history.replaceState({ tab: 'home', ref: null, depth: 0 }, '');
+  go('home', { fromHistory: true });
 }
 
 /* ── LOADING ─────────────────────────────────────── */
 function showLoading(show) {
-  document.getElementById('loading').classList.toggle('active', show);
+  q('loading').classList.toggle('active', show);
 }
 
 /* ── TOAST ───────────────────────────────────────── */
-function showToast(msg, type = '') {
-  const t = document.getElementById('toast');
-  t.textContent = type === 'error' ? '⚠ ' + msg : '✓ ' + msg;
-  t.className   = type;
-  t.style.display = 'block';
+// action: optional { label, run } — shows a button (e.g. Undo) and keeps the toast up longer
+function showToast(msg, type = 'success', action = null) {
+  const t   = q('toast');
+  const btn = q('toast-action');
+  q('toast-ic').innerHTML = icon(type === 'error' ? 'alert' : 'check', 18);
+  q('toast-msg').textContent = msg;
+  t.className = 'show ' + type + (action ? ' has-action' : '');
+  btn.textContent = action ? action.label : '';
+  btn.onclick = action ? () => { hideToast(); action.run(); } : null;
   clearTimeout(t._t);
-  t._t = setTimeout(() => { t.style.display = 'none'; }, 2500);
+  t._t = setTimeout(hideToast, action ? 6000 : 2500);
 }
 
-/* ── THEME ───────────────────────────────────────── */
+function hideToast() {
+  q('toast').className = '';
+  q('toast-action').onclick = null;
+}
+
+/* ── THEME / LANGUAGE ────────────────────────────── */
+// Status bar colour matches the header, which is the page background
+const THEME_BAR = { dark: '#0B1220', light: '#F6F7F9' };
+
+function applyTheme(t) {
+  document.documentElement.classList.remove('dark', 'light');
+  document.documentElement.classList.add(t);
+  q('theme-color-meta').content = THEME_BAR[t];
+  syncSettingsUI();
+}
+
 function initTheme() {
-  const s = localStorage.getItem('ffv2_theme') || 'dark';
-  document.documentElement.className = s;
-  document.getElementById('theme-btn').textContent = s === 'dark' ? '🌙' : '☀️';
+  let saved = null;
+  try { saved = localStorage.getItem('ffv2_theme'); } catch {}
+  applyTheme(saved || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
 }
 
-function toggleTheme() {
-  const h = document.documentElement;
-  const b = document.getElementById('theme-btn');
-  if (h.classList.contains('dark')) {
-    h.classList.replace('dark', 'light'); b.textContent = '☀️'; localStorage.setItem('ffv2_theme', 'light');
-  } else {
-    h.classList.replace('light', 'dark'); b.textContent = '🌙'; localStorage.setItem('ffv2_theme', 'dark');
-  }
+function setTheme(t) {
+  applyTheme(t);
+  try { localStorage.setItem('ffv2_theme', t); } catch {}
+}
+
+function syncSettingsUI() {
+  const theme = document.documentElement.classList.contains('light') ? 'light' : 'dark';
+  document.querySelectorAll('[data-theme-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeSet === theme)));
+  document.querySelectorAll('[data-lang-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.langSet === getLang())));
 }
 
 /* ── PIN LOCK ────────────────────────────────────── */
 function showPinScreen(mode) {
   pinBuffer = '';
-  const screen = document.getElementById('pin-screen');
+  const screen = q('pin-screen');
   screen.dataset.mode = mode;
-  document.getElementById('pin-title').textContent =
+  q('pin-title').textContent =
     mode === 'unlock' ? 'Enter PIN – पिन टाका' :
-    mode === 'set'    ? 'Set New PIN – नवीन पिन' :
+    mode === 'set'    ? 'Set new PIN – नवीन पिन' :
                         'Confirm PIN – पिन पुष्टी करा';
-  document.getElementById('pin-sub').textContent =
+  q('pin-sub').textContent =
     mode === 'unlock' ? 'Enter your 4-digit PIN' :
     mode === 'set'    ? 'Choose a 4-digit PIN for your app' : 'Re-enter your PIN';
-  document.getElementById('pin-error').textContent = '';
-  document.getElementById('pin-alt').style.display = mode === 'unlock' ? 'block' : 'none';
+  q('pin-error').textContent = '';
+  q('pin-alt').style.display = mode === 'unlock' ? 'block' : 'none';
   renderPinDots();
   screen.classList.add('active');
 }
 
 function renderPinDots() {
-  const dots = document.querySelectorAll('.pin-dot');
-  dots.forEach((d, i) => {
+  document.querySelectorAll('.pin-dot').forEach((d, i) => {
     d.className = 'pin-dot' + (i < pinBuffer.length ? ' filled' : '');
   });
 }
 
 function pinKey(val) {
+  if (Date.now() < pinLockedUntil) return;
   if (val === 'del') {
     pinBuffer = pinBuffer.slice(0, -1);
     renderPinDots();
     return;
   }
-  if (pinBuffer.length >= 4) return;
+  if (val === 'ok' || pinBuffer.length >= 4) return;
   pinBuffer += val;
   renderPinDots();
 
@@ -147,19 +236,32 @@ function pinKey(val) {
 }
 
 async function handlePinComplete() {
-  const screen = document.getElementById('pin-screen');
+  const screen = q('pin-screen');
   const mode   = screen.dataset.mode;
-  const errEl  = document.getElementById('pin-error');
+  const errEl  = q('pin-error');
 
   if (mode === 'unlock') {
     const stored = await getMeta('pin_hash');
-    if (verifyPin(pinBuffer, stored)) {
+    if (await verifyPin(pinBuffer, stored)) {
+      pinFails = 0;
+      // PINs set before v2.1 used a weak hash — upgrade it now that we know the PIN
+      if (isLegacyPinHash(stored)) await setMeta('pin_hash', await hashPin(pinBuffer));
       screen.classList.remove('active');
       launchApp();
     } else {
-      errEl.textContent = 'Wrong PIN – चुकीचा पिन';
+      pinFails++;
+      // After 5 wrong tries, pause input for 30 seconds
+      if (pinFails >= 5) {
+        pinFails = 0;
+        pinLockedUntil = Date.now() + 30000;
+        errEl.textContent = 'Too many tries — wait 30 seconds – ३० सेकंद थांबा';
+        setTimeout(() => { errEl.textContent = ''; }, 30000);
+      } else {
+        errEl.textContent = 'Wrong PIN – चुकीचा पिन';
+        setTimeout(() => { if (Date.now() >= pinLockedUntil) errEl.textContent = ''; }, 800);
+      }
       document.querySelectorAll('.pin-dot').forEach(d => d.className = 'pin-dot error');
-      setTimeout(() => { pinBuffer = ''; renderPinDots(); errEl.textContent = ''; }, 800);
+      setTimeout(() => { pinBuffer = ''; renderPinDots(); }, 800);
     }
   } else if (mode === 'set') {
     screen.dataset.firstPin = pinBuffer;
@@ -168,12 +270,10 @@ async function handlePinComplete() {
     showPinScreen('confirm');
   } else if (mode === 'confirm') {
     if (pinBuffer === screen.dataset.firstPin) {
-      await setMeta('pin_hash', hashPin(pinBuffer));
+      await setMeta('pin_hash', await hashPin(pinBuffer));
       screen.classList.remove('active');
       showToast('PIN set – पिन सेट झाला');
-      if (!document.getElementById('tab-home').classList.contains('active')) {
-        launchApp();
-      }
+      launchApp();
     } else {
       errEl.textContent = 'PINs do not match – पिन जुळत नाही';
       document.querySelectorAll('.pin-dot').forEach(d => d.className = 'pin-dot error');
@@ -183,395 +283,700 @@ async function handlePinComplete() {
 }
 
 async function removePin() {
+  if (!await getMeta('pin_hash')) { showToast('No PIN set – पिन सेट नाही'); return; }
+  const ok = await askSheet({
+    title: 'Remove PIN? – पिन काढायचा?',
+    message: 'Anyone with this phone will be able to open the app.',
+    actions: [{ label: 'Remove PIN – पिन काढा', value: true, style: 'btn-danger' }]
+  });
+  if (!ok) return;
   await setMeta('pin_hash', null);
   showToast('PIN removed – पिन काढला');
 }
 
-/* ── NAVIGATION ──────────────────────────────────── */
-function go(id) {
-  document.querySelectorAll('.tab, .nav-it, .d-item').forEach(el => el.classList.remove('active'));
-  ['tab-' + id, 'n-' + id, 'd-' + id].forEach(s => {
-    const el = document.getElementById(s); if (el) el.classList.add('active');
+/* ── OVERLAYS + HISTORY ──────────────────────────────
+   Every sheet, the settings panel and the lightbox push a history entry, so
+   the phone's Back button closes them instead of leaving the app. Pages push
+   entries too (depth counts steps above Home).                         */
+const overlays   = [];  // stack of { hide, after }
+const popWaiters = [];  // resolvers for history.back() calls we started
+
+function openOverlay(hide, after) {
+  overlays.push({ hide, after });
+  const st = history.state || { tab: CT, ref: curRef, depth: 0 };
+  history.pushState({ ...st, overlay: true, depth: (st.depth || 0) + 1 }, '');
+}
+
+// Close the top overlay from the UI; resolves once history has settled
+function closeOverlay() {
+  const o = overlays.pop();
+  if (!o) return Promise.resolve();
+  o.hide();
+  if (!history.state?.overlay) { o.after?.(); return Promise.resolve(); }
+  return new Promise(res => {
+    popWaiters.push(() => { o.after?.(); res(); });
+    history.back();
   });
-  const fab = document.getElementById('fab');
-  fab.style.display = ['evdetail', 'vendetail', 'summary'].includes(id) ? 'none' : 'flex';
+}
+
+// Hide every overlay without touching history (the next go() replaces the entry)
+function dropOverlays() {
+  while (overlays.length) { const o = overlays.pop(); o.hide(); o.after?.(); }
+}
+
+function onPopState(e) {
+  if (popWaiters.length) { popWaiters.shift()(); return; }
+  if (overlays.length) { const o = overlays.pop(); o.hide(); o.after?.(); return; }
+  const st = e.state;
+  if (st?.overlay) { history.back(); return; }   // stale entry reached via Forward
+  restorePage(st || { tab: 'home', ref: null });
+}
+
+function restorePage(st) {
+  if (st.tab === 'evdetail' && st.ref)       showEvDetail(st.ref, { fromHistory: true });
+  else if (st.tab === 'vendetail' && st.ref) showVenDetail(st.ref, { fromHistory: true });
+  else go(st.tab || 'home', { fromHistory: true });
+}
+
+/* ── NAVIGATION ──────────────────────────────────── */
+const TOP_TABS = ['home', 'events', 'expenses', 'vendors', 'summary'];
+
+const PAGE_TITLE = {
+  home: 'Flavor Fusion', events: 'Events – कार्यक्रम', expenses: 'Expenses – खर्च',
+  vendors: 'Vendors – विक्रेते', summary: 'Reports – अहवाल'
+};
+
+// The floating button: recording an expense is one tap from almost everywhere
+const FAB = {
+  home:      { en: 'Add expense', mr: 'खर्च जोडा',      run: () => openExpModal() },
+  events:    { en: 'New event',   mr: 'नवीन कार्यक्रम', run: () => openEvModal() },
+  evdetail:  { en: 'Add expense', mr: 'खर्च जोडा',      run: () => openExpModal(curRef) },
+  expenses:  { en: 'Add expense', mr: 'खर्च जोडा',      run: () => openExpModal() },
+  vendors:   { en: 'Add vendor',  mr: 'विक्रेता जोडा',  run: () => openVenModal() },
+  vendetail: { en: 'Pay vendor',  mr: 'देयक द्या',      run: () => openVPayModal(curRef) }
+};
+
+function go(id, { ref = null, fromHistory = false } = {}) {
+  const changed = id !== CT || ref !== curRef;
+
+  if (!fromHistory && changed) {
+    const st = history.state || { depth: 0 };
+    const depth = st.depth || 0;
+    if (id === 'home' && depth > 0) {
+      // Home is the root: unwind to it so Back from Home exits, like a native app
+      dropOverlays();
+      history.go(-depth);
+      return;
+    }
+    const entry = { tab: id, ref };
+    const tabToTab = TOP_TABS.includes(id) && TOP_TABS.includes(CT) && CT !== 'home';
+    if (st.overlay || tabToTab) history.replaceState({ ...entry, depth }, '');
+    else history.pushState({ ...entry, depth: depth + 1 }, '');
+  }
+
+  document.querySelectorAll('.tab, .nav-it').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-it').forEach(el => el.removeAttribute('aria-current'));
+  q('tab-' + id)?.classList.add('active');
+  // Detail pages keep their parent tab selected
+  const navId = id === 'evdetail' ? 'events' : id === 'vendetail' ? 'vendors' : id;
+  q('n-' + navId)?.classList.add('active');
+  q('n-' + navId)?.setAttribute('aria-current', 'page');
+
+  const fab = FAB[id];
+  q('fab').hidden = !fab;
+  if (fab) q('fab-label').innerHTML = tr(fab.en, fab.mr);
+
   CT = id;
+  curRef = ref;
+  setHeader();
   renderPage(id);
-  window.scrollTo(0, 0);
+  if (changed) window.scrollTo(0, 0);
+}
+
+function setHeader() {
+  const detail = CT === 'evdetail' || CT === 'vendetail';
+  const rec = CT === 'evdetail' ? D.events.find(e => e.id === curRef)
+            : CT === 'vendetail' ? D.vendors.find(v => v.id === curRef) : null;
+  const txt = q('hdr-text');
+  // Names are user content — never split by the language filter
+  txt.toggleAttribute('data-nl', detail);
+  q('hdr').classList.toggle('on-detail', detail);
+  txt.textContent = detail ? (rec?.name || '') : PAGE_TITLE[CT];
+  q('hdr-back').hidden = !detail;
+  q('hdr-edit').hidden = !detail;
+  q('hdr-delete').hidden = !detail;
+}
+
+function goBack(fallback) {
+  if ((history.state?.depth || 0) > 0 && !history.state.overlay) history.back();
+  else go(fallback);
 }
 
 function renderPage(id) {
-  if (id === 'home')    rHome();
-  if (id === 'events')  rEvents();
+  if (id === 'home')     rHome();
+  if (id === 'events')   rEvents();
   if (id === 'expenses') rExp();
-  if (id === 'vendors') rVen();
-  if (id === 'summary') rSummary();
+  if (id === 'vendors')  rVen();
+  if (id === 'summary')  rSummary();
 }
 
-function fabAction() {
-  if (CT === 'expenses') openExpModal();
-  else if (CT === 'vendors') openVenModal();
-  else openEvModal();
+// Re-render whatever is on screen after data changes
+function refreshCurrent() {
+  if (CT === 'evdetail')  { showEvDetail(curRef, { fromHistory: true }); return; }
+  if (CT === 'vendetail') { showVenDetail(curRef, { fromHistory: true }); return; }
+  renderPage(CT);
+}
+
+function renderPeriodSegs() {
+  document.querySelectorAll('[data-period-seg]').forEach(seg => {
+    seg.innerHTML = Object.entries(PERIODS).map(([k, label]) =>
+      `<button type="button" data-action="period" data-id="${k}" aria-pressed="${k === period}">${trPair(label)}</button>`).join('');
+  });
+}
+
+function periodLabel() {
+  const [en, mr] = PERIODS[period].split(' – ');
+  return { en, mr };
 }
 
 /* ── HOME ────────────────────────────────────────── */
 function rHome() {
-  const tb = D.events.reduce((s, e) => s + e.billing, 0);
-  const te = D.expenses.reduce((s, x) => s + x.amt, 0);
-  const tr = D.cPays.reduce((s, p) => s + p.amt, 0);
+  renderPeriodSegs();
+  const P = sliceByPeriod(D, period);
+  const tb = P.events.reduce((s, e) => s + e.billing, 0);
+  const te = P.expenses.reduce((s, x) => s + x.amt, 0);
+  const rc = P.cPays.reduce((s, p) => s + p.amt, 0);
+  const profit  = tb - te;
+  const pending = Math.max(0, tb - rc);
+  const margin  = tb > 0 ? Math.round(profit / tb * 100) : 0;
+  const collected = tb > 0 ? Math.min(100, rc / tb * 100) : 0;
+  const pl = periodLabel();
 
-  document.getElementById('kpi').innerHTML = `
-    <div class="sc"><div class="lbl">Portfolio – एकूण बिल</div><div class="n-lg" style="margin-top:4px">${fmtCurrency(tb)}</div></div>
-    <div class="sc"><div class="lbl cr">Expenses – खर्च</div><div class="n-lg cr" style="margin-top:4px">${fmtCurrency(te)}</div></div>
-    <div class="sc"><div class="lbl cg">Received – मिळाले</div><div class="n-lg cg" style="margin-top:4px">${fmtCurrency(tr)}</div></div>
-    <div class="sc"><div class="lbl ca">Pending – बाकी</div><div class="n-lg ca" style="margin-top:4px">${fmtCurrency(tb - tr)}</div></div>
-    <div class="sc full acc"><div class="lbl">Net Profit – निव्वळ नफा</div><div class="n-lg" style="margin-top:4px">${fmtCurrency(tb - te)}</div></div>
+  q('kpi').innerHTML = `
+    <div class="card hero">
+      <div class="label">${tr(`Net profit · ${pl.en}`, `निव्वळ नफा · ${pl.mr}`)}</div>
+      <div class="amt-xl ${profit < 0 ? 'neg' : ''}" style="margin-top:4px">${fmtCurrency(profit)}</div>
+      <div class="hero-sub">${P.events.length ? tr(
+        `${margin}% margin on ${fmtCurrency(tb)} billed · ${P.events.length} event${P.events.length > 1 ? 's' : ''}`,
+        `${fmtCurrency(tb)} बिलावर ${margin}% मार्जिन · ${P.events.length} कार्यक्रम`)
+        : tr('No events in this period', 'या कालावधीत कार्यक्रम नाहीत')}</div>
+      <div class="metrics">
+        <div class="metric"><div class="label">Received – मिळाले</div><div class="amt-md pos">${fmtCurrency(rc)}</div></div>
+        <div class="metric"><div class="label">Pending – बाकी</div><div class="amt-md ${pending > 0 ? 'due' : 'muted'}">${fmtCurrency(pending)}</div></div>
+        <div class="metric"><div class="label">Expenses – खर्च</div><div class="amt-md">${fmtCurrency(te)}</div></div>
+      </div>
+      <div class="prog" style="margin-top:var(--s4)" aria-label="Collected ${Math.round(collected)}%"><span style="width:${collected}%"></span></div>
+      <div class="meta" style="margin-top:6px">${tr(`${Math.round(collected)}% of billing collected`, `बिलाच्या ${Math.round(collected)}% वसुली`)}</div>
+    </div>
   `;
 
-  // Insights
-  const insights = generateInsights(D.events, D.cPays, D.expenses, D.vendors);
-  const insightHtml = insights.length
-    ? insights.map(i => `<div class="insight-row ${i.type}"><div class="insight-icon">${i.icon}</div><div class="insight-text">${i.text}</div></div>`).join('')
-    : '';
-  document.getElementById('insights-wrap').innerHTML = insightHtml;
-  document.getElementById('insights-wrap').style.display = insights.length ? 'block' : 'none';
+  // Nudges: events with no costs recorded, and an overdue backup
+  const missing = eventsMissingCosts(D.events, D.expenses);
+  const backupDays = lastExport ? daysSince(lastExport.slice(0, 10)) : null;
+  const needBackup = D.events.length && (backupDays === null || backupDays >= 7);
+  q('nudges').innerHTML =
+    (missing.length ? `
+      <div class="sec"><span class="sec-title">Record costs – खर्च नोंदवा</span><span class="meta">${missing.length}</span></div>
+      <div class="card">
+        <div class="note alert"><span class="note-ic">${icon('receipt', 16)}</span>
+          <div>${tr('These events have no expenses yet, so their profit is overstated.', 'या कार्यक्रमांचा खर्च नोंदवलेला नाही, त्यामुळे नफा जास्त दिसतो.')}</div></div>
+        <div class="list">${missing.slice(0, 5).map(e => `
+          <div class="row" role="button" tabindex="0" data-action="evdetail" data-id="${esc(e.id)}">
+            <div class="row-body"><div class="title-sm trunc" data-nl>${esc(e.name)}</div><div class="meta">${fmtDate(e.date)}</div></div>
+            <button type="button" class="btn-sm" data-action="open-exp" data-id="${esc(e.id)}">${icon('plus', 16)}${tr('Expense', 'खर्च')}</button>
+          </div>`).join('')}</div>
+      </div>` : '') +
+    (needBackup ? `
+      <div class="card" style="margin-top:var(--s3)">
+        <div class="note warning" style="align-items:center"><span class="note-ic">${icon('download', 16)}</span>
+          <div style="flex:1">${backupDays === null
+            ? tr('You have never backed up. If this phone is lost, your data is gone.', 'तुम्ही कधीही बॅकअप घेतलेला नाही.')
+            : tr(`Last backup ${backupDays} days ago`, `शेवटचा बॅकअप ${backupDays} दिवसांपूर्वी`)}</div>
+          <button type="button" class="btn-sm" data-action="export">${tr('Back up', 'बॅकअप')}</button></div>
+      </div>` : '');
 
-  // Overdue
+  // Insights (all time)
+  const insights = generateInsights(D.events, D.cPays, D.expenses, D.vendors, D.vPays)
+    .filter(i => i.icon !== 'receipt'); // the costs nudge above already says this
+  q('insights-wrap').innerHTML = insights.length ? `
+    <div class="sec"><span class="sec-title">Insights – माहिती</span></div>
+    <div class="card" data-nl>
+      ${insights.map(i => `<div class="note ${i.type}">
+        <span class="note-ic">${icon(i.icon, 16)}</span>
+        <div>${tr(i.en, i.mr)}</div>
+      </div>`).join('')}
+    </div>` : '';
+
+  // Pending collections (all time) — overdue first, then upcoming
   const od = D.events
-    .map(e => ({ ...e, _p: e.billing - calcEventReceived(e.id, D.cPays) }))
-    .filter(e => e._p > 0).sort((a, b) => b._p - a._p);
+    .map(e => ({ ...e, _p: e.billing - calcEventReceived(e.id, D.cPays), _late: isOverdue(e) }))
+    .filter(e => e._p > 0)
+    .sort((a, b) => (b._late - a._late) || (b._p - a._p));
 
-  document.getElementById('od-list').innerHTML = od.map(e => `
-    <div class="od-row" data-action="evdetail" data-id="${e.id}">
-      <div><div class="n-sm">${e.name}</div><div class="b-sm">${fmtDate(e.date)} · ${e.venue}</div></div>
-      <div style="text-align:right"><div class="n-md ca">${fmtCurrency(e._p)}</div><div class="b-sm">pending – बाकी</div></div>
-    </div>
-  `).join('') || '<div class="empty" style="padding:20px"><div class="empty-ic">🎉</div><div class="empty-tx">All clear – सर्व वसुली झाली!</div></div>';
+  q('od-list').innerHTML = od.length ? `<div class="card list">${od.map(e => `
+    <div class="row" role="button" tabindex="0" data-action="evdetail" data-id="${esc(e.id)}">
+      <div class="row-body">
+        <div class="title-sm trunc" data-nl>${esc(e.name)}</div>
+        <div class="meta trunc">${fmtDate(e.date)} · <span data-nl>${esc(e.venue)}</span></div>
+      </div>
+      <div class="row-end">
+        <div class="amt-sm ${e._late ? 'neg' : 'due'}">${fmtCurrency(e._p)}</div>
+        ${e._late
+          ? `<span class="chip neg">${tr(`Overdue ${daysSince(e.date)}d`, `${daysSince(e.date)} दिवस थकीत`)}</span>`
+          : `<span class="chip">${tr('Upcoming', 'आगामी')}</span>`}
+      </div>
+    </div>`).join('')}</div>`
+    : `<div class="card">${emptyState({ ic: 'check', tone: 'pos', compact: true, text: 'All payments collected – सर्व वसुली झाली' })}</div>`;
 }
 
 /* ── EVENTS ──────────────────────────────────────── */
+function eventStatus(ev) {
+  const { received: rec, pending: pend } = calcEventPL(ev, D.cPays, D.expenses);
+  const noCosts = isOverdue(ev) && !D.expenses.some(x => x.evId === ev.id);
+  return { rec, pend, noCosts, overdue: pend > 0 && isOverdue(ev) };
+}
+
+function eventCard(ev) {
+  const { received: rec, pending: pend, pctPaid: pct } = calcEventPL(ev, D.cPays, D.expenses);
+  const st = eventStatus(ev);
+  let chip;
+  if (pend <= 0)          chip = `<span class="chip pos">${tr('Paid', 'पूर्ण')}</span>`;
+  else if (st.overdue)    chip = `<span class="chip neg">${tr('Overdue', 'थकीत')}</span>`;
+  else if (rec > 0)       chip = `<span class="chip due">${tr('Partial', 'अंशतः')}</span>`;
+  else                    chip = `<span class="chip">${tr('Unpaid', 'बाकी')}</span>`;
+
+  return `<div class="card item" role="button" tabindex="0" data-action="evdetail" data-id="${esc(ev.id)}">
+    <div class="item-top">
+      <div style="min-width:0">
+        <div class="title-sm trunc" data-nl>${esc(ev.name)}</div>
+        <div class="meta trunc">${fmtDate(ev.date)} · <span data-nl>${esc(ev.venue)}</span> · ${esc(ev.type)}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        ${chip}
+        ${st.noCosts ? `<span class="chip neg">${tr('No costs', 'खर्च नाही')}</span>` : ''}
+      </div>
+    </div>
+    <div class="item-foot">
+      ${pend > 0
+        ? `<div><div class="label">To collect – बाकी</div><div class="amt-md ${st.overdue ? 'neg' : 'due'}">${fmtCurrency(pend)}</div></div>`
+        : `<div><div class="label">Collected – मिळाले</div><div class="amt-md pos">${fmtCurrency(rec)}</div></div>`}
+      ${pend > 0 ? `<div class="meta">${tr(`${fmtCurrency(rec)} of ${fmtCurrency(ev.billing)}`, `${fmtCurrency(ev.billing)} पैकी ${fmtCurrency(rec)}`)}</div>` : ''}
+    </div>
+    <div class="prog"><span style="width:${pct}%"></span></div>
+  </div>`;
+}
+
+const EV_FILTERS = {
+  all:     { label: 'All – सर्व',              test: () => true },
+  collect: { label: 'To collect – बाकी',       test: s => s.pend > 0 },
+  overdue: { label: 'Overdue – थकीत',          test: s => s.overdue },
+  nocost:  { label: 'No costs – खर्च नाही',    test: s => s.noCosts },
+  paid:    { label: 'Paid – पूर्ण',            test: s => s.pend <= 0 }
+};
+
 function rEvents() {
-  const list = [...D.events].sort((a, b) => new Date(b.date) - new Date(a.date));
-  if (!list.length) {
-    document.getElementById('ev-list').innerHTML = `
-      <div class="empty">
-        <div class="empty-ic">📅</div>
-        <div class="empty-tx">No events – कार्यक्रम नाही</div>
-        <button class="empty-cta" onclick="openEvModal()">+ New Event – नवीन कार्यक्रम</button>
-      </div>`;
+  if (!D.events.length) {
+    q('ev-filters').innerHTML = '';
+    q('ev-list').innerHTML = emptyState({
+      ic: 'calendar', text: 'No events yet – अजून कार्यक्रम नाही',
+      action: `<button type="button" class="btn btn-primary" data-action="quick" data-id="event">${icon('plus', 18)}New event – नवीन कार्यक्रम</button>`
+    });
     return;
   }
-  document.getElementById('ev-list').innerHTML = list.map(ev => {
-    const { received: rec, pending: pend, pctPaid: pct } = calcEventPL(ev, D.cPays, D.expenses);
-    let bc = 'b-pending', bl = 'Pending';
-    if (pend <= 0) { bc = 'b-paid'; bl = 'Paid'; }
-    else if (rec > 0) { bc = 'b-partial'; bl = 'Partial'; }
-    return `<div class="ev-card" data-action="evdetail" data-id="${ev.id}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div class="n-sm">${ev.name}</div>
-          <div class="b-sm" style="margin-top:2px">${fmtDate(ev.date)} · ${ev.venue} · ${ev.type}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <span class="badge ${bc}">${bl}</span>
-          <button class="del-btn" data-action="delete" data-type="events" data-id="${ev.id}">×</button>
-        </div>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:12px">
-        <div><div class="lbl">Pending – बाकी</div><div class="n-md ca">${fmtCurrency(Math.max(0, pend))}</div></div>
-        <div style="text-align:right">
-          <div class="b-sm">Billing: ${fmtCurrency(ev.billing)}</div>
-          <div style="font-size:11px;font-weight:600;color:var(--green);margin-top:1px">Rcvd: ${fmtCurrency(rec)}</div>
-        </div>
-      </div>
-      <div class="prog"><div class="prog-fill" style="width:${pct}%"></div></div>
-    </div>`;
+  const status = new Map(D.events.map(e => [e.id, eventStatus(e)]));
+  q('ev-filters').innerHTML = Object.entries(EV_FILTERS).map(([k, f]) => {
+    const n = D.events.filter(e => f.test(status.get(e.id))).length;
+    if (k !== 'all' && !n) return '';
+    return `<button type="button" class="f-chip" data-action="ev-filter" data-id="${k}" aria-pressed="${F.ev === k}">${trPair(f.label)}<span class="n">${n}</span></button>`;
   }).join('');
+
+  const list = D.events.filter(e => EV_FILTERS[F.ev].test(status.get(e.id)) && matches(F.evQ, e.name, e.venue, e.type, e.mobile));
+  if (!list.length) {
+    q('ev-list').innerHTML = emptyState({ ic: 'search', text: 'No matching events – काहीही सापडले नाही' });
+    return;
+  }
+  const t = today();
+  const upcoming = list.filter(e => e.date >= t).sort((a, b) => a.date.localeCompare(b.date));
+  const past     = list.filter(e => e.date <  t).sort((a, b) => b.date.localeCompare(a.date));
+  q('ev-list').innerHTML =
+    (upcoming.length ? `<div class="sec"><span class="sec-title">Upcoming – आगामी</span><span class="meta">${upcoming.length}</span></div>${upcoming.map(eventCard).join('')}` : '') +
+    (past.length     ? `<div class="sec"><span class="sec-title">Past – मागील</span><span class="meta">${past.length}</span></div>${past.map(eventCard).join('')}` : '');
 }
 
 /* ── EVENT DETAIL ────────────────────────────────── */
-async function showEvDetail(id) {
+function reminderLink(ev, pending) {
+  const msg = `Namaste! A gentle reminder from Flavor Fusion: ${fmtCurrency(pending)} is pending for ${ev.name} (${fmtDate(ev.date)}). Kindly arrange the payment. Thank you!\n\n`
+            + `नमस्कार! ${ev.name} साठी ${fmtCurrency(pending)} बाकी आहे. कृपया देयक करावे. धन्यवाद!`;
+  return `https://wa.me/${phoneDigits(ev.mobile)}?text=${encodeURIComponent(msg)}`;
+}
+
+async function showEvDetail(id, { fromHistory = false } = {}) {
   const ev = D.events.find(e => e.id === id); if (!ev) return;
-  const pays = [...D.cPays.filter(p => p.evId === id)].sort((a, b) => new Date(b.date) - new Date(a.date));
-  const exps = [...D.expenses.filter(x => x.evId === id)].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const pays = D.cPays.filter(p => p.evId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const exps = D.expenses.filter(x => x.evId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
   const { received: rec, expTotal: exTot, pending: pend, profit, margin, pctPaid: pct } = calcEventPL(ev, D.cPays, D.expenses);
-
-  // Load photos from IndexedDB
   const photos = await getPhotosForEvent(id);
+  const phone = phoneDigits(ev.mobile);
+  const noCosts = isOverdue(ev) && !exps.length;
 
-  const photoHtml = `<div class="photo-strip">
-    ${photos.map(p => `<img class="photo-thumb" src="${p.data}" loading="lazy" data-action="lightbox" data-photoid="${p.id}" data-evid="${id}">`).join('')}
-    <div class="photo-add" data-action="add-photo" data-id="${id}"><div style="font-size:22px">📷</div><div>Add – जोडा</div></div>
-  </div>`;
-
-  document.getElementById('tab-evdetail').innerHTML = `
-    <button class="back-btn" data-action="go" data-id="events">← Events – कार्यक्रम</button>
-    <div class="d-hdr">
-      <div class="d-nm">${ev.name}</div>
-      <div class="d-mt">${fmtDate(ev.date)} · ${ev.venue} · ${ev.type}${ev.mobile ? ' · 📞 ' + ev.mobile : ''}</div>
-      <div class="d-stats">
-        <div><div class="ds-l">Billing – बिल</div><div class="ds-v">${fmtCurrency(ev.billing)}</div></div>
-        <div><div class="ds-l">Received – मिळाले</div><div class="ds-v">${fmtCurrency(rec)}</div></div>
-        <div><div class="ds-l">Pending – बाकी</div><div class="ds-v">${fmtCurrency(Math.max(0, pend))}</div></div>
-      </div>
-      <div style="height:5px;background:rgba(255,255,255,.2);border-radius:3px;margin-top:12px;overflow:hidden">
-        <div style="height:100%;width:${pct}%;background:#fff;border-radius:3px;transition:width .4s"></div>
+  q('tab-evdetail').innerHTML = `
+    <div class="card pad">
+      <div class="detail-name" data-nl>${esc(ev.name)}</div>
+      <div class="facts">
+        <span class="fact">${icon('calendar', 16)}${fmtDate(ev.date)}</span>
+        <span class="fact" data-nl>${icon('pin', 16)}${esc(ev.venue)}</span>
+        <span class="chip">${esc(ev.type)}</span>
+        ${phone ? `<a class="fact" href="tel:+${esc(phone)}">${icon('phone', 16)}${esc(ev.mobile)}</a>` : ''}
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-      <div class="card-sm" style="padding:12px;text-align:center">
-        <div class="lbl ca">Expenses – खर्च</div>
-        <div class="n-md ca" style="margin-top:4px">${fmtCurrency(exTot)}</div>
+    ${noCosts ? `<div class="card">
+      <div class="note alert"><span class="note-ic">${icon('receipt', 16)}</span>
+        <div>${tr('No expenses recorded yet — the profit below is not real until you add them.', 'अजून खर्च नोंदवलेला नाही — खर्च जोडेपर्यंत खालील नफा खरा नाही.')}</div></div>
+    </div>` : ''}
+
+    <div class="card pad">
+      <div class="metrics" style="margin:0;padding:0;border:0">
+        <div class="metric"><div class="label">Bill – बिल</div><div class="amt-md">${fmtCurrency(ev.billing)}</div></div>
+        <div class="metric"><div class="label">Received – मिळाले</div><div class="amt-md pos">${fmtCurrency(rec)}</div></div>
+        <div class="metric"><div class="label">Pending – बाकी</div><div class="amt-md ${pend > 0 ? (isOverdue(ev) ? 'neg' : 'due') : 'muted'}">${fmtCurrency(Math.max(0, pend))}</div></div>
       </div>
-      <div class="card-sm" style="padding:12px;text-align:center">
-        <div class="lbl" style="color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">Profit – नफा</div>
-        <div class="n-md" style="margin-top:4px;color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtCurrency(profit)}</div>
+      <div class="prog" style="margin-top:var(--s3)"><span style="width:${pct}%"></span></div>
+      <div class="metrics">
+        <div class="metric"><div class="label">Expenses – खर्च</div><div class="amt-md">${fmtCurrency(exTot)}</div></div>
+        <div class="metric"><div class="label">Profit – नफा</div><div class="amt-md ${noCosts ? 'muted' : profit >= 0 ? 'pos' : 'neg'}">${fmtCurrency(profit)}</div></div>
+        <div class="metric"><div class="label">Margin – मार्जिन</div><div class="amt-md ${noCosts ? 'muted' : profit >= 0 ? 'pos' : 'neg'}">${ev.billing > 0 ? margin + '%' : '—'}</div></div>
       </div>
-      <div class="card-sm" style="padding:12px;text-align:center">
-        <div class="lbl">Margin – मार्जिन</div>
-        <div class="n-md" style="margin-top:4px;color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">${ev.billing > 0 ? margin + '%' : '—'}</div>
-      </div>
+      ${pend > 0 && phone ? `<div class="btn-row" style="margin-top:var(--s4)">
+        <a class="btn btn-secondary" href="tel:+${esc(phone)}">${icon('phone', 18)}${tr('Call', 'कॉल')}</a>
+        <a class="btn btn-wa" href="${esc(reminderLink(ev, pend))}" target="_blank" rel="noopener">${icon('message', 18)}${tr('Remind', 'आठवण')}</a>
+      </div>` : ''}
     </div>
 
-    ${ev.notes ? `<div class="card-sm" style="padding:12px 14px;margin-bottom:16px"><div class="lbl" style="margin-bottom:4px">Notes – नोंदी</div><div style="font-size:13px;line-height:1.5">${ev.notes}</div></div>` : ''}
+    ${ev.notes ? `<div class="card pad"><div class="label">Notes – नोंदी</div><div class="notes-text" data-nl>${esc(ev.notes)}</div></div>` : ''}
 
-    <div class="sec">Photos – फोटो</div>
-    <div class="card-sm" style="padding:12px 14px;margin-bottom:16px">${photoHtml}</div>
-
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 10px">
-      <div class="sec" style="margin:0">Client Payments – ग्राहक देयके</div>
-      <button style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer" data-action="open-cpay" data-id="${ev.id}">+ Add – जोडा</button>
+    <div class="sec"><span class="sec-title">Expenses – खर्च</span>
+      <button type="button" class="btn-sm" data-action="open-exp" data-id="${esc(ev.id)}">${icon('plus', 16)}Add – जोडा</button></div>
+    <div class="card list">
+      ${rowsOrEmpty(exps.map(x => expenseRow(x, { showEvent: false })).join('') +
+        (exps.length > 1 ? `<div class="row" style="min-height:48px"><div class="row-body title-sm">Total – एकूण</div><div class="amt-sm">${fmtCurrency(exTot)}</div></div>` : ''),
+      'No expenses yet – खर्च नाही')}
     </div>
-    <div class="card" style="padding:0 16px;margin-bottom:16px">
-      ${pays.map(p => `<div class="pay-row">
-        <div>
-          <div class="n-sm">${fmtCurrency(p.amt)}</div>
-          <div class="b-sm">${fmtDate(p.date)} · ${p.mode || 'Cash'}${p.notes ? ' · ' + p.notes : ''}</div>
+
+    <div class="sec"><span class="sec-title">Payments received – मिळालेली देयके</span>
+      <button type="button" class="btn-sm" data-action="open-cpay" data-id="${esc(ev.id)}">${icon('plus', 16)}Add – जोडा</button></div>
+    <div class="card list">
+      ${rowsOrEmpty(pays.map(p => `<div class="row" role="button" tabindex="0" data-action="edit-cpay" data-id="${esc(p.id)}">
+        <div class="row-ic" style="background:var(--pos-soft);color:var(--pos)">${icon('wallet', 18)}</div>
+        <div class="row-body">
+          <div class="amt-sm pos">${fmtCurrency(p.amt)}</div>
+          <div class="meta trunc">${fmtDate(p.date)} · ${esc(p.mode || 'Cash')}${p.notes ? ` · <span data-nl>${esc(p.notes)}</span>` : ''}</div>
         </div>
-        <button class="del-btn" data-action="delete" data-type="cPays" data-id="${p.id}" data-refresh="evdetail" data-refresh-id="${ev.id}">×</button>
-      </div>`).join('') || '<div style="padding:14px 0;text-align:center" class="b-sm">No payments – देयक नाही</div>'}
+        <button type="button" class="del-btn" data-action="delete" data-type="cPays" data-id="${esc(p.id)}" aria-label="Delete payment">${icon('trash', 16)}</button>
+      </div>`).join(''), 'No payments yet – देयक नाही')}
     </div>
 
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 10px">
-      <div class="sec" style="margin:0">Event Expenses – कार्यक्रम खर्च</div>
-      <button style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer" data-action="open-exp" data-id="${ev.id}">+ Add – जोडा</button>
+    <div class="sec"><span class="sec-title">Photos – फोटो</span><span class="meta">${photos.length || ''}</span></div>
+    <div class="card pad">
+      <div class="photo-strip">
+        ${photos.map(p => `<img class="photo-thumb" src="${esc(p.data)}" loading="lazy" alt="Event photo" role="button" tabindex="0" data-action="lightbox" data-photoid="${esc(p.id)}" data-evid="${esc(id)}">`).join('')}
+        <button type="button" class="photo-add" data-action="add-photo" data-id="${esc(id)}">${icon('camera', 22)}Add – जोडा</button>
+      </div>
     </div>
-    <div class="card" style="padding:0 16px;margin-bottom:16px">
-      ${exps.map(x => {
-        const ven = D.vendors.find(v => v.id === x.venId);
-        return `<div class="row-item">
-          <div class="row-ico" style="background:rgba(220,38,38,.08)">${CAT_ICONS[x.cat] || '💸'}</div>
-          <div class="row-body"><div class="row-nm">${x.head}</div><div class="row-mt">${fmtDate(x.date)}${ven ? ' · ' + ven.name : ''}</div></div>
-          <div class="n-sm cr">${fmtCurrency(x.amt)}</div>
-        </div>`;
-      }).join('') || '<div style="padding:14px 0;text-align:center" class="b-sm">No expenses – खर्च नाही</div>'}
-    </div>
-    ${exps.length ? `<div class="card-sm" style="padding:12px 16px;display:flex;justify-content:space-between;margin-bottom:12px"><span class="n-sm">Total Expenses – एकूण खर्च</span><span class="n-sm cr">${fmtCurrency(exTot)}</span></div>` : ''}
-    <button class="btn btn-ol" data-action="open-ev-edit" data-id="${ev.id}">✏ Edit Event – संपादित करा</button>
   `;
 
-  document.getElementById('tab-evdetail').dataset.evid = id;
-  go('evdetail');
+  q('tab-evdetail').dataset.evid = id;
+  go('evdetail', { ref: id, fromHistory });
 }
 
 /* ── EXPENSES ────────────────────────────────────── */
+// One expense row; tap to edit, bin to delete (with Undo)
+function expenseRow(x, { showEvent = true } = {}) {
+  const ev  = D.events.find(e => e.id === x.evId);
+  const ven = D.vendors.find(v => v.id === x.venId);
+  const bits = [
+    showEvent ? `<span data-nl>${esc(ev?.name || '—')}</span>` : '',
+    fmtDate(x.date),
+    ven ? `<span data-nl>${esc(ven.name)}</span>` : ''
+  ].filter(Boolean).join(' · ');
+  return `<div class="row" role="button" tabindex="0" data-action="edit-exp" data-id="${esc(x.id)}">
+    <div class="row-ic">${catIcon(x.cat)}</div>
+    <div class="row-body">
+      <div class="title-sm trunc">${esc(x.head || x.cat)}</div>
+      <div class="meta trunc">${bits}</div>
+    </div>
+    <div class="row-end">
+      <div class="amt-sm">${fmtCurrency(x.amt)}</div>
+      ${isOnCredit(x) ? `<span class="chip due">${tr('Credit', 'उधार')}</span>` : ''}
+    </div>
+    <button type="button" class="del-btn" data-action="delete" data-type="expenses" data-id="${esc(x.id)}" aria-label="Delete expense">${icon('trash', 16)}</button>
+  </div>`;
+}
+
+function vendorDuesTotal() {
+  return D.vendors.reduce((s, v) => s + Math.max(0, calcVendorBalance(v.id, D.expenses, D.vPays).balance), 0);
+}
+
 function rExp() {
-  const list = [...D.expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
-  document.getElementById('exp-ct').textContent  = list.length;
-  document.getElementById('exp-tot').textContent = fmtCurrency(list.reduce((s, x) => s + x.amt, 0));
-  if (!list.length) {
-    document.getElementById('exp-list').innerHTML = `<div class="empty" style="padding:32px 20px"><div class="empty-ic">💸</div><div class="empty-tx">No expenses – खर्च नाही</div></div>`;
+  const cats = Object.keys(EXPENSE_HEADS).filter(c => D.expenses.some(x => x.cat === c));
+  const creditN = D.expenses.filter(isOnCredit).length;
+  q('exp-filters').innerHTML = D.expenses.length ? [
+    `<button type="button" class="f-chip" data-action="exp-filter" data-id="all" aria-pressed="${F.exp === 'all'}">${tr('All', 'सर्व')}</button>`,
+    creditN ? `<button type="button" class="f-chip" data-action="exp-filter" data-id="credit" aria-pressed="${F.exp === 'credit'}">${tr('On credit', 'उधार')}<span class="n">${creditN}</span></button>` : '',
+    ...cats.map(c => `<button type="button" class="f-chip" data-action="exp-filter" data-id="${esc(c)}" aria-pressed="${F.exp === c}">${catIcon(c, 15)}${esc(c)}</button>`)
+  ].join('') : '';
+
+  const list = D.expenses
+    .filter(x => F.exp === 'all' || (F.exp === 'credit' ? isOnCredit(x) : x.cat === F.exp))
+    .filter(x => {
+      if (!F.expQ) return true;
+      const ev = D.events.find(e => e.id === x.evId), ven = D.vendors.find(v => v.id === x.venId);
+      return matches(F.expQ, x.head, x.cat, x.notes, ev?.name, ven?.name, x.amt);
+    })
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  q('exp-tot').textContent    = fmtCurrency(list.reduce((s, x) => s + x.amt, 0));
+  q('exp-credit').textContent = fmtCurrency(vendorDuesTotal());
+
+  if (!D.expenses.length) {
+    q('exp-list').innerHTML = emptyState({
+      ic: 'receipt', text: 'No expenses yet – खर्च नाही',
+      action: `<button type="button" class="btn btn-primary" data-action="quick" data-id="expense">${icon('plus', 18)}Add expense – खर्च जोडा</button>`
+    });
     return;
   }
-  document.getElementById('exp-list').innerHTML = list.map(x => {
-    const ev  = D.events.find(e => e.id === x.evId);
-    const ven = D.vendors.find(v => v.id === x.venId);
-    return `<div class="row-item">
-      <div class="row-ico" style="background:rgba(220,38,38,.08)">${CAT_ICONS[x.cat] || '💸'}</div>
-      <div class="row-body">
-        <div class="row-nm">${x.head}</div>
-        <div class="row-mt">${ev?.name || '—'} · ${fmtDate(x.date)}</div>
-        ${ven ? `<div style="font-size:10px;color:var(--blue);font-weight:600;margin-top:1px">${ven.name}</div>` : ''}
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
-        <div class="n-sm cr">${fmtCurrency(x.amt)}</div>
-        <button class="del-btn" data-action="delete" data-type="expenses" data-id="${x.id}">×</button>
-      </div>
-    </div>`;
+  if (!list.length) {
+    q('exp-list').innerHTML = emptyState({ ic: 'search', text: 'No matching expenses – काहीही सापडले नाही' });
+    return;
+  }
+
+  // Group by month, newest first
+  const groups = new Map();
+  list.forEach(x => {
+    const k = (x.date || '').slice(0, 7);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(x);
+  });
+
+  q('exp-list').innerHTML = [...groups].map(([k, xs]) => {
+    const d = new Date(k + '-01');
+    const month = !isNaN(d)
+      ? tr(d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }), d.toLocaleDateString('mr-IN', { month: 'long', year: 'numeric' }))
+      : 'No date – दिनांक नाही';
+    return `<div class="sec"><span class="sec-title">${month}</span><span class="meta">${fmtCurrency(xs.reduce((s, x) => s + x.amt, 0))}</span></div>
+    <div class="card list">${xs.map(x => expenseRow(x)).join('')}</div>`;
   }).join('');
 }
 
 /* ── VENDORS ─────────────────────────────────────── */
+function balanceView({ balance: bal, entries }) {
+  // A vendor with nothing recorded isn't "settled" — there's simply no history
+  if (!entries) return `<span class="chip">${tr('No entries', 'नोंद नाही')}</span>`;
+  if (bal > 0)  return `<div class="amt-sm due">${fmtCurrency(bal)}</div><div class="meta">${tr('to pay', 'देणे')}</div>`;
+  if (bal < 0)  return `<div class="amt-sm info">${fmtCurrency(-bal)}</div><div class="meta">${tr('advance', 'आगाऊ')}</div>`;
+  return `<span class="chip pos">${tr('Settled', 'पूर्ण')}</span>`;
+}
+
 function rVen() {
   if (!D.vendors.length) {
-    document.getElementById('ven-list').innerHTML = `<div class="empty"><div class="empty-ic">🤝</div><div class="empty-tx">No vendors – विक्रेते नाही</div><button class="empty-cta" onclick="openVenModal()">+ Add Vendor – विक्रेता जोडा</button></div>`;
+    q('ven-list').innerHTML = emptyState({
+      ic: 'store', text: 'No vendors yet – विक्रेते नाही',
+      action: `<button type="button" class="btn btn-primary" data-action="quick" data-id="vendor">${icon('plus', 18)}Add vendor – विक्रेता जोडा</button>`
+    });
     return;
   }
-  document.getElementById('ven-list').innerHTML = D.vendors.map(v => {
-    const { balance: bal } = calcVendorBalance(v.id, D.expenses, D.vPays);
-    return `<div class="ven-card" data-action="vendetail" data-id="${v.id}">
-      <div style="flex:1;min-width:0">
-        <div class="n-sm">${v.name}</div>
-        <div class="b-sm" style="margin-top:2px">${v.cat}${v.specialty ? ' · ' + v.specialty : ''}</div>
-        ${v.phone ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">📞 ${v.phone}</div>` : ''}
+  const list = D.vendors
+    .filter(v => matches(F.venQ, v.name, v.cat, v.specialty, v.phone))
+    .map(v => ({ v, b: calcVendorBalance(v.id, D.expenses, D.vPays) }))
+    // Vendors you owe come first, then by name
+    .sort((a, b) => (Math.max(0, b.b.balance) - Math.max(0, a.b.balance)) || a.v.name.localeCompare(b.v.name));
+  if (!list.length) {
+    q('ven-list').innerHTML = emptyState({ ic: 'search', text: 'No matching vendors – काहीही सापडले नाही' });
+    return;
+  }
+  q('ven-list').innerHTML = `<div class="card list">${list.map(({ v, b }) => `
+    <div class="row" role="button" tabindex="0" data-action="vendetail" data-id="${esc(v.id)}">
+      <div class="avatar" data-nl>${esc(initials(v.name))}</div>
+      <div class="row-body">
+        <div class="title-sm trunc" data-nl>${esc(v.name)}</div>
+        <div class="meta trunc">${esc(v.cat)}${v.specialty ? ' · ' + esc(v.specialty) : ''}</div>
       </div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;margin-left:12px">
-        <div class="n-md" style="color:${bal > 0 ? 'var(--red)' : 'var(--green)'}">${fmtCurrency(bal)}</div>
-        <div class="lbl">Balance – शिल्लक</div>
-        <button class="del-btn" data-action="delete" data-type="vendors" data-id="${v.id}">×</button>
-      </div>
-    </div>`;
-  }).join('');
+      <div class="row-end">${balanceView(b)}</div>
+    </div>`).join('')}</div>`;
 }
 
 /* ── VENDOR DETAIL ───────────────────────────────── */
-function showVenDetail(id) {
+function showVenDetail(id, { fromHistory = false } = {}) {
   const vn = D.vendors.find(v => v.id === id); if (!vn) return;
-  const exps = D.expenses.filter(x => x.venId === id);
-  const pays = D.vPays.filter(p => p.venId === id);
-  const { credited: te, paid: tp, balance: bal } = calcVendorBalance(id, D.expenses, D.vPays);
+  const exps = D.expenses.filter(x => x.venId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const pays = D.vPays.filter(p => p.venId === id).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const bal = calcVendorBalance(id, D.expenses, D.vPays);
+  const phone = phoneDigits(vn.phone);
 
-  document.getElementById('tab-vendetail').innerHTML = `
-    <button class="back-btn" data-action="go" data-id="vendors">← Vendors – विक्रेते</button>
-    <div class="card" style="padding:18px;margin-bottom:16px">
-      <div class="n-md" style="margin-bottom:3px">${vn.name}</div>
-      <div class="b-sm" style="margin-bottom:14px">${vn.cat}${vn.phone ? ' · 📞 ' + vn.phone : ''}${vn.notes ? ' · ' + vn.notes : ''}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center">
-        <div><div class="lbl ca">Credit – क्रेडिट</div><div class="n-md ca" style="margin-top:4px">${fmtCurrency(te)}</div></div>
-        <div><div class="lbl cg">Paid – दिले</div><div class="n-md cg" style="margin-top:4px">${fmtCurrency(tp)}</div></div>
-        <div><div class="lbl">Balance – शिल्लक</div><div class="n-md" style="margin-top:4px;color:${bal > 0 ? 'var(--red)' : 'var(--green)'}">${fmtCurrency(bal)}</div></div>
+  q('tab-vendetail').innerHTML = `
+    <div class="card pad" style="display:flex;gap:var(--s3);align-items:center">
+      <div class="avatar" style="width:52px;height:52px;font-size:18px" data-nl>${esc(initials(vn.name))}</div>
+      <div style="min-width:0">
+        <div class="detail-name" data-nl>${esc(vn.name)}</div>
+        <div class="facts" style="margin-top:4px">
+          <span class="chip">${esc(vn.cat)}${vn.specialty ? ' · ' + esc(vn.specialty) : ''}</span>
+          ${phone ? `<a class="fact" href="tel:+${esc(phone)}">${icon('phone', 16)}${esc(vn.phone)}</a>` : ''}
+        </div>
       </div>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div class="sec" style="margin:0">Vendor Payments – विक्रेता देयके</div>
-      <button style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer" data-action="open-vpay" data-id="${vn.id}">+ Add – जोडा</button>
+    ${vn.notes ? `<div class="card pad"><div class="label">Notes – नोंदी</div><div class="notes-text" data-nl>${esc(vn.notes)}</div></div>` : ''}
+
+    <div class="card pad">
+      ${bal.entries ? `<div class="metrics" style="margin:0;padding:0;border:0">
+        <div class="metric"><div class="label">Supplied – पुरवले</div><div class="amt-md">${fmtCurrency(bal.supplied)}</div></div>
+        <div class="metric"><div class="label">Paid – दिले</div><div class="amt-md pos">${fmtCurrency(bal.paid)}</div></div>
+        <div class="metric"><div class="label">${bal.balance < 0 ? 'Advance – आगाऊ' : 'You owe – देणे'}</div><div class="amt-md ${bal.balance > 0 ? 'due' : bal.balance < 0 ? 'info' : 'muted'}">${fmtCurrency(Math.abs(bal.balance))}</div></div>
+      </div>`
+      : `<div class="meta">${tr('Nothing recorded with this vendor yet. Add an expense and pick this vendor, or record a payment.', 'या विक्रेत्याची अजून नोंद नाही.')}</div>`}
     </div>
-    <div class="card" style="padding:0 16px;margin-bottom:16px">
-      ${pays.map(p => {
+
+    <div class="sec"><span class="sec-title">Supplied – पुरवलेले खर्च</span>
+      <button type="button" class="btn-sm" data-action="open-link" data-id="${esc(vn.id)}">${icon('link', 16)}Link – जोडा</button></div>
+    <div class="card list">
+      ${rowsOrEmpty(exps.map(x => expenseRow(x)).join(''), 'No expenses linked – खर्च नाही')}
+    </div>
+
+    <div class="sec"><span class="sec-title">Payments made – दिलेली देयके</span>
+      <button type="button" class="btn-sm" data-action="open-vpay" data-id="${esc(vn.id)}">${icon('plus', 16)}Add – जोडा</button></div>
+    <div class="card list">
+      ${rowsOrEmpty(pays.map(p => {
         const ev = D.events.find(e => e.id === p.evId);
-        return `<div class="pay-row">
-          <div style="flex:1;min-width:0">
-            <div class="n-sm">${fmtCurrency(p.amt)}</div>
-            <div class="b-sm">${fmtDate(p.date)} · ${p.mode}${ev ? ' · ' + ev.name : ''}</div>
-            ${p.head ? `<div style="font-size:10px;font-weight:600;color:var(--blue);margin-top:1px">${p.cat} → ${p.head}</div>` : ''}
+        return `<div class="row" role="button" tabindex="0" data-action="edit-vpay" data-id="${esc(p.id)}">
+          <div class="row-ic">${icon('wallet', 18)}</div>
+          <div class="row-body">
+            <div class="amt-sm">${fmtCurrency(p.amt)}</div>
+            <div class="meta trunc">${fmtDate(p.date)} · ${esc(p.mode)}${ev ? ` · <span data-nl>${esc(ev.name)}</span>` : ''}${p.head ? ' · ' + esc(p.head) : ''}</div>
           </div>
-          <button class="del-btn" data-action="delete" data-type="vPays" data-id="${p.id}" data-refresh="vendetail" data-refresh-id="${vn.id}">×</button>
+          <button type="button" class="del-btn" data-action="delete" data-type="vPays" data-id="${esc(p.id)}" aria-label="Delete payment">${icon('trash', 16)}</button>
         </div>`;
-      }).join('') || '<div style="padding:14px 0;text-align:center" class="b-sm">No payments – देयक नाही</div>'}
+      }).join(''), 'No payments yet – देयक नाही')}
     </div>
-    <div class="sec">Expenses Assigned – नियुक्त खर्च</div>
-    <div class="card" style="padding:0 16px;margin-bottom:16px">
-      ${exps.map(x => {
-        const ev = D.events.find(e => e.id === x.evId);
-        return `<div class="row-item">
-          <div class="row-ico" style="background:rgba(220,38,38,.08)">${CAT_ICONS[x.cat] || '💸'}</div>
-          <div class="row-body"><div class="row-nm">${x.head}</div><div class="row-mt">${fmtDate(x.date)}${ev ? ' · ' + ev.name : ''}</div></div>
-          <div class="n-sm cr">${fmtCurrency(x.amt)}</div>
-        </div>`;
-      }).join('') || '<div style="padding:14px 0;text-align:center" class="b-sm">No expenses – खर्च नाही</div>'}
-    </div>
-    <button class="btn btn-ol" data-action="open-ven-edit" data-id="${vn.id}">✏ Edit Vendor – संपादित करा</button>
-    <button class="btn btn-blue" data-action="open-link" data-id="${vn.id}" style="margin-top:8px">🔗 Link Expenses – खर्च जोडा</button>
   `;
 
-  document.getElementById('tab-vendetail').dataset.vnid = id;
-  go('vendetail');
+  q('tab-vendetail').dataset.vnid = id;
+  go('vendetail', { ref: id, fromHistory });
 }
 
-/* ── SUMMARY / REPORTS ───────────────────────────── */
+/* ── REPORTS ─────────────────────────────────────── */
 function rSummary() {
-  const totalBill = D.events.reduce((s, e) => s + e.billing, 0);
-  const totalExp  = D.expenses.reduce((s, x) => s + x.amt, 0);
+  renderPeriodSegs();
+  const P = sliceByPeriod(D, period);
+  const totalBill = P.events.reduce((s, e) => s + e.billing, 0);
+  const totalExp  = P.expenses.reduce((s, x) => s + x.amt, 0);
   const profit    = totalBill - totalExp;
+  const noData    = t => `<div class="list-empty">${t}</div>`;
+  const missing   = new Set(eventsMissingCosts(P.events, P.expenses).map(e => e.id));
 
   const byCat = {};
-  D.expenses.forEach(x => { byCat[x.cat] = (byCat[x.cat] || 0) + x.amt; });
+  P.expenses.forEach(x => { byCat[x.cat] = (byCat[x.cat] || 0) + x.amt; });
   const maxCat = Math.max(...Object.values(byCat), 1);
-
   const catBars = Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => `
     <div class="bar-row">
-      <div class="bar-label">${cat}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${amt/maxCat*100}%;background:var(--red)"></div></div>
-      <div class="bar-val cr">${fmtCurrency(amt)}</div>
-    </div>`).join('') || '<div class="b-sm" style="text-align:center;padding:16px">No data – माहिती नाही</div>';
+      <div class="bar-label trunc">${esc(cat)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${amt / maxCat * 100}%;background:var(--text-3)"></div></div>
+      <div class="bar-val">${fmtCurrency(amt)}</div>
+    </div>`).join('') || noData('No data – माहिती नाही');
 
-  const evPL = D.events.map(ev => ({ ev, ...calcEventPL(ev, D.cPays, D.expenses) })).sort((a, b) => b.profit - a.profit);
-
+  const evPL = P.events.map(ev => ({ ev, ...calcEventPL(ev, P.cPays, P.expenses) })).sort((a, b) => b.profit - a.profit);
+  // Bar length is the size of the profit (or loss) relative to the largest one
+  const maxAbsPL = Math.max(...evPL.map(r => Math.abs(r.profit)), 1);
   const plRows = evPL.map(r => `
-    <div class="bar-row" style="align-items:center;gap:10px;margin-bottom:12px;cursor:pointer" data-action="evdetail" data-id="${r.ev.id}">
-      <div style="width:110px;flex-shrink:0">
-        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.ev.name}</div>
-        <div class="b-sm">${fmtDate(r.ev.date)}</div>
-      </div>
-      <div style="flex:1"><div class="bar-track"><div class="bar-fill" style="width:${r.pctPaid}%;background:${r.profit >= 0 ? 'var(--green)' : 'var(--red)'}"></div></div></div>
-      <div style="width:72px;text-align:right;flex-shrink:0;font-size:12px;font-weight:700;color:${r.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtCurrency(r.profit)}</div>
-    </div>`).join('') || '<div class="b-sm" style="text-align:center;padding:16px">No events – कार्यक्रम नाही</div>';
+    <div class="bar-row" role="button" tabindex="0" data-action="evdetail" data-id="${esc(r.ev.id)}">
+      <div style="min-width:0"><div class="bar-label trunc" style="color:var(--text)" data-nl>${esc(r.ev.name)}</div>
+        <div class="meta">${missing.has(r.ev.id) ? `<span class="neg">${tr('no costs', 'खर्च नाही')}</span>` : fmtDate(r.ev.date)}</div></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.abs(r.profit) / maxAbsPL * 100}%;background:var(${missing.has(r.ev.id) ? '--line-strong' : r.profit >= 0 ? '--pos' : '--neg'})"></div></div>
+      <div class="bar-val ${missing.has(r.ev.id) ? 'muted' : r.profit >= 0 ? 'pos' : 'neg'}">${fmtCurrency(r.profit)}</div>
+    </div>`).join('') || noData('No events – कार्यक्रम नाही');
 
   const byMode = {};
-  D.cPays.forEach(p => { byMode[p.mode] = (byMode[p.mode] || 0) + p.amt; });
-  const modeColors = { Cash:'#D97706', UPI:'#2563EB', NEFT:'#16A34A', Cheque:'#EA580C', Bank:'#7c3aed' };
+  P.cPays.forEach(p => { byMode[p.mode] = (byMode[p.mode] || 0) + p.amt; });
+  const maxMode = Math.max(...Object.values(byMode), 1);
   const modeRows = Object.entries(byMode).sort((a, b) => b[1] - a[1]).map(([m, a]) => `
     <div class="bar-row">
-      <div class="bar-label">${m}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${a/Math.max(...Object.values(byMode),1)*100}%;background:${modeColors[m]||'var(--blue)'}"></div></div>
-      <div class="bar-val cg">${fmtCurrency(a)}</div>
-    </div>`).join('') || '<div class="b-sm" style="text-align:center;padding:16px">No data – माहिती नाही</div>';
+      <div class="bar-label trunc">${esc(m)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${a / maxMode * 100}%;background:var(--pos)"></div></div>
+      <div class="bar-val">${fmtCurrency(a)}</div>
+    </div>`).join('') || noData('No data – माहिती नाही');
 
-  document.getElementById('summary-content').innerHTML = `
-    <div class="stat-grid" style="margin-bottom:16px">
-      <div class="sc"><div class="lbl">Events – कार्यक्रम</div><div class="n-lg" style="margin-top:4px">${D.events.length}</div></div>
-      <div class="sc"><div class="lbl cg">Net Profit – निव्वळ नफा</div><div class="n-lg cg" style="margin-top:4px">${fmtCurrency(profit)}</div></div>
-      <div class="sc"><div class="lbl">Margin – मार्जिन</div><div class="n-lg" style="margin-top:4px;color:${totalBill > 0 ? (profit >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--muted)'}">
-        ${totalBill > 0 ? Math.round(profit/totalBill*100) + '%' : '—'}</div></div>
-      <div class="sc"><div class="lbl">Vendors – विक्रेते</div><div class="n-lg" style="margin-top:4px">${D.vendors.length}</div></div>
+  const board = [...P.events].sort((a, b) => b.billing - a.billing).slice(0, 10).map((e, i) => `
+    <div class="row" role="button" tabindex="0" data-action="evdetail" data-id="${esc(e.id)}">
+      <div class="rank ${i < 3 ? 'top' : ''}">${i + 1}</div>
+      <div class="row-body"><div class="title-sm trunc" data-nl>${esc(e.name)}</div><div class="meta trunc">${fmtDate(e.date)} · <span data-nl>${esc(e.venue)}</span></div></div>
+      <div class="amt-sm">${fmtCurrency(e.billing)}</div>
+    </div>`).join('');
+
+  q('summary-content').innerHTML = `
+    <div class="metric-tiles">
+      <div class="card"><div class="label">Net profit – निव्वळ नफा</div><div class="amt-lg ${profit >= 0 ? 'pos' : 'neg'}">${fmtCurrency(profit)}</div></div>
+      <div class="card"><div class="label">Margin – मार्जिन</div><div class="amt-lg ${totalBill > 0 ? (profit >= 0 ? 'pos' : 'neg') : 'muted'}">${totalBill > 0 ? Math.round(profit / totalBill * 100) + '%' : '—'}</div></div>
+      <div class="card"><div class="label">Billed – बिल</div><div class="amt-lg">${fmtCurrency(totalBill)}</div></div>
+      <div class="card"><div class="label">Events – कार्यक्रम</div><div class="amt-lg">${P.events.length}</div></div>
     </div>
-    <div class="chart-card">
-      <div class="chart-title">📅 Profit/Loss Per Event – नफा/तोटा</div>${plRows}
-    </div>
-    <div class="chart-card">
-      <div class="chart-title">💸 Expenses by Category – खर्चाचा प्रकार</div>${catBars}
-    </div>
-    <div class="chart-card">
-      <div class="chart-title">💳 Collections by Mode – पद्धतीनुसार वसुली</div>${modeRows}
-    </div>
-    <div class="chart-card">
-      <div class="chart-title">🏆 Event Leaderboard – बिलनुसार यादी</div>
-      ${[...D.events].sort((a,b)=>b.billing-a.billing).map((e,i)=>`
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer" data-action="evdetail" data-id="${e.id}">
-          <div style="display:flex;align-items:center;gap:10px">
-            <div style="width:24px;height:24px;border-radius:6px;background:${i===0?'var(--amber)':i===1?'var(--muted)':i===2?'var(--accent)':'var(--card2)'};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:${i<3?'#fff':'var(--muted)'}">${i+1}</div>
-            <div><div style="font-size:13px;font-weight:600">${e.name}</div><div class="b-sm">${fmtDate(e.date)} · ${e.venue}</div></div>
-          </div>
-          <div class="n-md co">${fmtCurrency(e.billing)}</div>
-        </div>`).join('') || '<div class="b-sm" style="text-align:center;padding:16px">No events</div>'}
-    </div>
+    ${missing.size ? `<div class="card" style="margin-top:var(--s3)"><div class="note alert"><span class="note-ic">${icon('receipt', 16)}</span>
+      <div>${tr(`${missing.size} event${missing.size > 1 ? 's have' : ' has'} no expenses, so profit here is overstated.`, `${missing.size} कार्यक्रमांचा खर्च नोंदवलेला नाही, त्यामुळे नफा जास्त दिसतो.`)}</div></div></div>` : ''}
+    <div class="sec"></div>
+    <div class="card pad"><div class="chart-title">${icon('calendar', 18)}Profit by event – कार्यक्रमनिहाय नफा</div>${plRows}</div>
+    <div class="card pad"><div class="chart-title">${icon('receipt', 18)}Spending by category – खर्चाचे प्रकार</div>${catBars}</div>
+    <div class="card pad"><div class="chart-title">${icon('wallet', 18)}Collections by mode – पद्धतीनुसार वसुली</div>${modeRows}</div>
+    <div class="card pad" style="padding-bottom:var(--s2)"><div class="chart-title">${icon('trophy', 18)}Biggest events – सर्वात मोठे कार्यक्रम</div>
+      <div>${board || noData('No events – कार्यक्रम नाही')}</div></div>
   `;
 }
 
-/* ── MODAL HELPERS ───────────────────────────────── */
-function q(id)  { return document.getElementById(id); }
-function qv(id) { return q(id).value.trim(); }
-function qf(id) { return parseFloat(q(id).value); }
+/* ── SHEETS ──────────────────────────────────────── */
+function openSheet(id, after) {
+  const el = q(id);
+  el.classList.add('active');
+  el.querySelector('.sheet').scrollTop = 0;
+  openOverlay(() => el.classList.remove('active'), after);
+}
 
 function closeModals() {
-  document.querySelectorAll('.modal-ov').forEach(m => m.classList.remove('active'));
+  return closeOverlay();
+}
+
+// In-app replacement for confirm(): resolves to the chosen action's value, or null on Cancel / Back
+function askSheet({ title, message = '', actions }) {
+  return new Promise(resolve => {
+    let result = null;
+    q('ask-title').textContent = title;
+    q('ask-msg').textContent   = message;
+    const box = q('ask-actions');
+    box.innerHTML = '';
+    [...actions, { label: 'Cancel – रद्द करा', value: null, style: 'btn-ghost' }].forEach(a => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn ' + (a.style || 'btn-primary');
+      b.textContent = a.label;
+      b.addEventListener('click', () => { result = a.value; closeOverlay(); });
+      box.appendChild(b);
+    });
+    openSheet('ask-modal', () => resolve(result));
+  });
 }
 
 function populateSelect(id, options, selected = '') {
   q(id).innerHTML = options.map(o =>
     typeof o === 'string'
-      ? `<option value="${o}"${o===selected?' selected':''}>${o}</option>`
-      : `<option value="${o.v}"${o.v===selected?' selected':''}>${o.l}</option>`
+      ? `<option value="${esc(o)}"${o === selected ? ' selected' : ''}>${esc(o)}</option>`
+      : `<option value="${esc(o.v)}"${o.v === selected ? ' selected' : ''}>${esc(o.l)}</option>`
   ).join('');
 }
 
-function showFieldErrors(errors) {
-  // Clear previous
+function clearFieldErrors() {
   document.querySelectorAll('.field-error').forEach(el => el.remove());
-  document.querySelectorAll('.error').forEach(el => el.classList.remove('error'));
+  document.querySelectorAll('.field .error').forEach(el => el.classList.remove('error'));
+}
 
+function showFieldErrors(errors) {
+  clearFieldErrors();
   for (const [field, msg] of Object.entries(errors)) {
+    if (!msg) continue;
     const inp = document.getElementById(field) || document.querySelector(`[name="${field}"]`);
     if (!inp) continue;
     inp.classList.add('error');
@@ -579,15 +984,19 @@ function showFieldErrors(errors) {
     err.className = 'field-error'; err.textContent = msg;
     inp.parentNode.appendChild(err);
   }
-  // Scroll to first error
   const first = document.querySelector('.field-error');
   if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-/* ── EVENT MODAL ─────────────────────────────────── */
+function eventOptions() {
+  return [...D.events].sort((a, b) => b.date.localeCompare(a.date))
+    .map(e => ({ v: e.id, l: `${e.name} · ${fmtDate(e.date)}` }));
+}
+
+/* ── EVENT SHEET ─────────────────────────────────── */
 function openEvModal(id) {
   const ev = id ? D.events.find(e => e.id === id) : null;
-  q('ev-id').value = ev?.id || '';
+  q('ev-id').value      = ev?.id      || '';
   q('ev-name').value    = ev?.name    || '';
   q('ev-date').value    = ev?.date    || '';
   q('ev-venue').value   = ev?.venue   || '';
@@ -595,9 +1004,9 @@ function openEvModal(id) {
   q('ev-mobile').value  = ev?.mobile  || '';
   q('ev-notes').value   = ev?.notes   || '';
   populateSelect('ev-type', EVENT_TYPES, ev?.type || '');
-  q('ev-mtitle').textContent = ev ? 'Edit Event – संपादित करा' : 'New Event – नवीन कार्यक्रम';
-  document.querySelectorAll('.field-error').forEach(el => el.remove());
-  q('ev-modal').classList.add('active');
+  q('ev-mtitle').textContent = ev ? 'Edit event – संपादित करा' : 'New event – नवीन कार्यक्रम';
+  clearFieldErrors();
+  openSheet('ev-modal');
 }
 
 async function saveEvent() {
@@ -609,7 +1018,8 @@ async function saveEvent() {
     mobile:  qv('ev-mobile')
   };
   const { valid, errors } = validate(EVENT_RULES, data);
-  if (!valid) { showFieldErrors(errors); return; }
+  // Rule keys are field names; the inputs are ev-<name>
+  if (!valid) { showFieldErrors(Object.fromEntries(Object.entries(errors).map(([k, v]) => ['ev-' + k, v]))); return; }
 
   const id = qv('ev-id');
   const record = {
@@ -630,42 +1040,89 @@ async function saveEvent() {
   else    D.events.push(record);
 
   closeModals();
-  showToast('Event saved – कार्यक्रम जतन झाला', 'success');
-  renderPage(CT);
+  showToast('Event saved – कार्यक्रम जतन झाला');
+  refreshCurrent();
 }
 
-/* ── EXPENSE MODAL ───────────────────────────────── */
-function openExpModal(fixEvId) {
-  const ex = (fixEvId && typeof fixEvId === 'object') ? fixEvId : null;
-  const preEvId = (typeof fixEvId === 'string') ? fixEvId : null;
-  q('exp-id').value = ex?.id || '';
+/* ── EXPENSE SHEET ───────────────────────────────── */
+// The event an expense most likely belongs to: the one whose date is nearest today
+// (catering costs land in the days just before and after an event).
+function defaultEventId() {
+  if (!D.events.length) return '';
+  const t = new Date(today());
+  let best = null;
+  for (const e of D.events) {
+    const d = Math.abs(new Date(e.date) - t);
+    if (!best || d < best.d || (d === best.d && e.date > best.e.date)) best = { e, d };
+  }
+  return best.e.id;
+}
 
-  populateSelect('exp-ev', D.events.map(e => ({ v: e.id, l: `${e.name} – ${fmtDate(e.date)}` })), ex?.evId || preEvId || '');
-  populateSelect('exp-cat', Object.keys(EXPENSE_HEADS), ex?.cat || '');
-  loadExpHeads(ex?.head);
-  q('exp-amt').value   = ex?.amt   || '';
-  q('exp-date').value  = ex?.date  || today();
-  populateSelect('exp-mode', PAY_MODES, ex?.mode || '');
-  populateSelect('exp-vendor', [{ v: '', l: 'None – कोणी नाही' }, ...D.vendors.map(v => ({ v: v.id, l: v.name }))], ex?.venId || '');
+function setExpCat(cat, head = '') {
+  q('exp-cat').value = cat;
+  q('exp-cats').innerHTML = Object.keys(EXPENSE_HEADS).map(c =>
+    `<button type="button" class="cat-chip" data-cat="${esc(c)}" aria-pressed="${c === cat}">${catIcon(c, 20)}${esc(c)}</button>`).join('');
+  populateSelect('exp-head', EXPENSE_HEADS[cat] || [], head);
+}
+
+function setExpPay(pay) {
+  q('exp-pay').dataset.value = pay;
+  q('exp-pay').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.pay === pay)));
+  const credit = pay === 'credit';
+  q('exp-mode-field').hidden = credit;
+  q('exp-vendor-lbl').innerHTML = credit
+    ? 'Owed to – कोणाला देणे <span class="req">*</span>'
+    : 'Vendor – विक्रेता';
+}
+
+function populateVendorSelect(selected = '') {
+  populateSelect('exp-vendor', [
+    { v: '', l: 'None – कोणी नाही' },
+    ...[...D.vendors].sort((a, b) => a.name.localeCompare(b.name)).map(v => ({ v: v.id, l: v.name })),
+    { v: '__new', l: '+ New vendor – नवीन विक्रेता' }
+  ], selected);
+  q('exp-vendor').dataset.prev = selected;
+}
+
+function openExpModal(arg) {
+  if (!D.events.length) {
+    showToast('Create an event first – आधी कार्यक्रम जोडा', 'error');
+    return;
+  }
+  const ex   = arg && typeof arg === 'object' ? arg : null;
+  const evId = ex?.evId || (typeof arg === 'string' && arg) || defaultEventId();
+  const last = readPref('ffv2_lastexp', {});
+
+  q('exp-id').value    = ex?.id || '';
+  q('exp-amt').value   = ex?.amt || '';
+  populateSelect('exp-ev', eventOptions(), evId);
+  setExpCat(ex?.cat || last.cat || Object.keys(EXPENSE_HEADS)[0], ex?.head || last.head || '');
+  populateSelect('exp-mode', PAY_MODES, ex?.mode || last.mode || '');
+  populateVendorSelect(ex?.venId || '');
+  setExpPay(ex ? (isOnCredit(ex) ? 'credit' : 'paid') : 'paid');
+  q('exp-date').value  = ex?.date || today();
   q('exp-notes').value = ex?.notes || '';
-  q('exp-mtitle').textContent = ex ? 'Edit Expense – संपादित करा' : 'Record Expense – खर्च नोंदवा';
-  document.querySelectorAll('.field-error').forEach(el => el.remove());
-  q('exp-modal').classList.add('active');
+  q('exp-mtitle').textContent = ex ? 'Edit expense – संपादित करा' : 'Record expense – खर्च नोंदवा';
+  q('btn-del-exp').hidden       = !ex;
+  q('btn-save-exp-next').hidden = !!ex;
+  clearFieldErrors();
+  openSheet('exp-modal');
+  // Keyboard opens straight onto the amount (focus must happen inside the tap)
+  if (!ex) q('exp-amt').focus({ preventScroll: true });
 }
 
-function loadExpHeads(selected = '') {
-  const cat = qv('exp-cat');
-  populateSelect('exp-head', EXPENSE_HEADS[cat] || [], selected);
-}
-
-async function saveExpense() {
-  const data = {
-    evId: qv('exp-ev'),
-    amt:  qf('exp-amt'),
-    date: qv('exp-date')
-  };
+async function saveExpense({ next = false } = {}) {
+  const pay  = q('exp-pay').dataset.value || 'paid';
+  const data = { evId: qv('exp-ev'), amt: qf('exp-amt'), date: qv('exp-date') };
   const { valid, errors } = validate(EXPENSE_RULES, data);
-  if (!valid) { showFieldErrors(errors); return; }
+  const venId = qv('exp-vendor') === '__new' ? '' : qv('exp-vendor');
+  if (pay === 'credit' && !venId) errors['exp-vendor'] = 'Choose who you owe – विक्रेता निवडा';
+  if (!valid || errors['exp-vendor']) {
+    // validate() keys errors by field name; map them onto this sheet's inputs
+    const map = { evId: 'exp-ev', amt: 'exp-amt', date: 'exp-date' };
+    showFieldErrors(Object.fromEntries(Object.entries(errors).map(([k, v]) => [map[k] || k, v])));
+    return;
+  }
 
   const id = qv('exp-id');
   const record = {
@@ -675,38 +1132,52 @@ async function saveExpense() {
     head:  qv('exp-head'),
     amt:   data.amt,
     date:  data.date,
-    mode:  qv('exp-mode'),
-    venId: qv('exp-vendor'),
+    pay,
+    mode:  pay === 'paid' ? qv('exp-mode') : '',
+    venId,
     notes: qv('exp-notes')
   };
 
   await putOne('expenses', record);
   if (id) D.expenses = D.expenses.map(x => x.id === id ? record : x);
   else    D.expenses.push(record);
+  writePref('ffv2_lastexp', { cat: record.cat, head: record.head, mode: record.mode || readPref('ffv2_lastexp', {}).mode });
 
+  refreshCurrent();
+  if (next) {
+    // Keep the event, date, category and payment; clear what changes per entry
+    q('exp-amt').value = '';
+    q('exp-notes').value = '';
+    clearFieldErrors();
+    q('exp-amt').focus({ preventScroll: true });
+    showToast(`Saved ${fmtCurrency(record.amt)} · add the next – पुढील खर्च`);
+    return;
+  }
   closeModals();
-  showToast('Expense recorded – खर्च नोंदवला', 'success');
-  if (CT === 'evdetail') { showEvDetail(q('tab-evdetail').dataset.evid); return; }
-  renderPage(CT);
+  showToast(`Expense saved – खर्च नोंदवला`);
 }
 
-/* ── CLIENT PAYMENT MODAL ────────────────────────── */
-function openCPayModal(evId) {
-  q('cpay-evid').value = evId;
-  q('cpay-id').value   = '';
-  q('cpay-amt').value  = '';
-  q('cpay-date').value = today();
-  q('cpay-notes').value = '';
-  populateSelect('cpay-mode', PAY_MODES);
-  document.querySelectorAll('.field-error').forEach(el => el.remove());
-  q('cpay-modal').classList.add('active');
+/* ── CLIENT PAYMENT SHEET ────────────────────────── */
+function openCPayModal(evId, payId) {
+  const p = payId ? D.cPays.find(x => x.id === payId) : null;
+  q('cpay-evid').value  = p?.evId || evId;
+  q('cpay-id').value    = p?.id || '';
+  q('cpay-amt').value   = p?.amt || '';
+  q('cpay-date').value  = p?.date || today();
+  q('cpay-notes').value = p?.notes || '';
+  populateSelect('cpay-mode', PAY_MODES, p?.mode || '');
+  q('cpay-mtitle').textContent = p ? 'Edit payment – संपादित करा' : 'Payment received – देयक मिळाले';
+  q('btn-del-cpay').hidden = !p;
+  clearFieldErrors();
+  openSheet('cpay-modal');
+  if (!p) q('cpay-amt').focus({ preventScroll: true });
 }
 
 async function saveCPay() {
   const evId = qv('cpay-evid');
   const data = { evId, amt: qf('cpay-amt'), date: qv('cpay-date') };
   const { valid, errors } = validate(PAYMENT_RULES, data);
-  if (!valid) { showFieldErrors(errors); return; }
+  if (!valid) { showFieldErrors({ 'cpay-amt': errors.amt, 'cpay-date': errors.date }); return; }
 
   const id = qv('cpay-id');
   const record = { id: id || uid('CP'), evId, amt: data.amt, date: data.date, mode: qv('cpay-mode'), notes: qv('cpay-notes') };
@@ -716,34 +1187,33 @@ async function saveCPay() {
   else    D.cPays.push(record);
 
   closeModals();
-  showToast('Payment added – देयक जोडले', 'success');
-  if (CT === 'evdetail') { showEvDetail(q('tab-evdetail').dataset.evid); return; }
-  renderPage(CT);
+  showToast('Payment saved – देयक जोडले');
+  refreshCurrent();
 }
 
-/* ── VENDOR MODAL ────────────────────────────────── */
+/* ── VENDOR SHEET ────────────────────────────────── */
 function openVenModal(id) {
   const vn = id ? D.vendors.find(v => v.id === id) : null;
-  q('ven-id').value    = vn?.id       || '';
-  q('ven-name').value  = vn?.name     || '';
-  q('ven-phone').value = vn?.phone    || '';
-  q('ven-notes').value = vn?.notes    || '';
-  populateSelect('ven-cat', Object.keys(EXPENSE_HEADS), vn?.cat || '');
-  loadVenSpecialty(vn?.specialty);
-  q('ven-mtitle').textContent = vn ? 'Edit Vendor – संपादित करा' : 'New Vendor – नवीन विक्रेता';
-  document.querySelectorAll('.field-error').forEach(el => el.remove());
-  q('ven-modal').classList.add('active');
+  q('ven-id').value    = vn?.id    || '';
+  q('ven-name').value  = vn?.name  || '';
+  q('ven-phone').value = vn?.phone || '';
+  q('ven-notes').value = vn?.notes || '';
+  populateSelect('ven-cat', Object.keys(EXPENSE_HEADS), vn?.cat || (pickVendorForExpense ? qv('exp-cat') : ''));
+  loadVenSpecialty(vn?.specialty || (pickVendorForExpense ? qv('exp-head') : ''));
+  q('ven-mtitle').textContent = vn ? 'Edit vendor – संपादित करा' : 'New vendor – नवीन विक्रेता';
+  clearFieldErrors();
+  openSheet('ven-modal', () => { pickVendorForExpense = null; });
+  if (!vn) q('ven-name').focus({ preventScroll: true });
 }
 
 function loadVenSpecialty(selected = '') {
-  const cat = qv('ven-cat');
-  populateSelect('ven-specialty', EXPENSE_HEADS[cat] || [], selected);
+  populateSelect('ven-specialty', EXPENSE_HEADS[qv('ven-cat')] || [], selected);
 }
 
 async function saveVendor() {
   const data = { name: qv('ven-name'), phone: qv('ven-phone') };
   const { valid, errors } = validate(VENDOR_RULES, data);
-  if (!valid) { showFieldErrors(errors); return; }
+  if (!valid) { showFieldErrors({ 'ven-name': errors.name, 'ven-phone': errors.phone }); return; }
 
   const id = qv('ven-id');
   const record = { id: id || uid('VN'), name: data.name, cat: qv('ven-cat'), specialty: qv('ven-specialty'), phone: data.phone, notes: qv('ven-notes') };
@@ -752,68 +1222,116 @@ async function saveVendor() {
   if (id) D.vendors = D.vendors.map(v => v.id === id ? record : v);
   else    D.vendors.push(record);
 
-  closeModals();
-  showToast('Vendor saved – विक्रेता जतन झाला', 'success');
-  renderPage(CT);
+  // Opened from the expense sheet's "+ New vendor": go back to it with this vendor picked
+  const backToExpense = pickVendorForExpense;
+  await closeModals();
+  if (backToExpense) populateVendorSelect(record.id);
+  showToast('Vendor saved – विक्रेता जतन झाला');
+  refreshCurrent();
 }
 
-/* ── VENDOR PAYMENT MODAL ────────────────────────── */
-function openVPayModal(venId) {
-  const vn = D.vendors.find(v => v.id === venId);
-  q('vpay-venid').value = venId;
-  q('vpay-id').value    = '';
-  q('vpay-amt').value   = '';
-  q('vpay-date').value  = today();
-  q('vpay-notes').value = '';
-  populateSelect('vpay-ev', [{ v: '', l: '— No event – कार्यक्रम नाही —' }, ...D.events.map(e => ({ v: e.id, l: `${e.name} – ${fmtDate(e.date)}` }))]);
-  populateSelect('vpay-cat', Object.keys(EXPENSE_HEADS), vn?.cat || '');
-  loadVPayHead(vn?.specialty);
-  populateSelect('vpay-mode', PAY_MODES);
-  document.querySelectorAll('.field-error').forEach(el => el.remove());
-  q('vpay-modal').classList.add('active');
-}
-
-function loadVPayHead(selected = '') {
-  const cat = qv('vpay-cat');
-  populateSelect('vpay-head', EXPENSE_HEADS[cat] || [], selected);
+/* ── VENDOR PAYMENT SHEET ────────────────────────── */
+function openVPayModal(venId, payId) {
+  const p  = payId ? D.vPays.find(x => x.id === payId) : null;
+  const vid = p?.venId || venId;
+  const bal = calcVendorBalance(vid, D.expenses, D.vPays).balance;
+  q('vpay-venid').value = vid;
+  q('vpay-id').value    = p?.id || '';
+  q('vpay-amt').value   = p?.amt || (bal > 0 ? bal : '');
+  q('vpay-date').value  = p?.date || today();
+  q('vpay-notes').value = p?.notes || '';
+  q('vpay-due').textContent = bal > 0 ? `You owe ${fmtCurrency(bal)} – देणे ${fmtCurrency(bal)}` : '';
+  populateSelect('vpay-ev', [{ v: '', l: 'No event – कार्यक्रम नाही' }, ...eventOptions()], p?.evId || '');
+  populateSelect('vpay-mode', PAY_MODES, p?.mode || '');
+  q('vpay-mtitle').textContent = p ? 'Edit payment – संपादित करा' : 'Pay vendor – विक्रेता देयक';
+  q('btn-del-vpay').hidden = !p;
+  clearFieldErrors();
+  openSheet('vpay-modal');
 }
 
 async function saveVPay() {
   const venId = qv('vpay-venid');
   const data = { venId, amt: qf('vpay-amt'), date: qv('vpay-date') };
   const { valid, errors } = validate(VPAY_RULES, data);
-  if (!valid) { showFieldErrors(errors); return; }
+  if (!valid) { showFieldErrors({ 'vpay-amt': errors.amt, 'vpay-date': errors.date }); return; }
 
-  const id = qv('vpay-id');
-  const record = { id: id || uid('VP'), venId, evId: qv('vpay-ev'), cat: qv('vpay-cat'), head: qv('vpay-head'), amt: data.amt, date: data.date, mode: qv('vpay-mode'), notes: qv('vpay-notes') };
+  const id  = qv('vpay-id');
+  const old = id ? D.vPays.find(p => p.id === id) : null;
+  const record = { id: id || uid('VP'), venId, evId: qv('vpay-ev'), cat: old?.cat || '', head: old?.head || '', amt: data.amt, date: data.date, mode: qv('vpay-mode'), notes: qv('vpay-notes') };
 
   await putOne('vPays', record);
   if (id) D.vPays = D.vPays.map(p => p.id === id ? record : p);
   else    D.vPays.push(record);
 
   closeModals();
-  showToast('Vendor payment saved – विक्रेता देयक जतन', 'success');
-  if (CT === 'vendetail') { showVenDetail(q('tab-vendetail').dataset.vnid); return; }
-  renderPage(CT);
+  showToast('Vendor payment saved – विक्रेता देयक जतन');
+  refreshCurrent();
 }
 
-/* ── DELETE ──────────────────────────────────────── */
-async function deleteRow(type, id, refresh, refreshId) {
-  if (!confirm('Delete? – हटवायचे का?\nThis cannot be undone.')) return;
+/* ── DELETE (with Undo) ──────────────────────────── */
+async function deleteRow(type, id) {
+  const rec = D[type].find(x => x.id === id); if (!rec) return;
+  const removed = { [type]: [rec] };
+  let photos = [];
 
-  await deleteOne(type, id);
-  D[type] = D[type].filter(x => x.id !== id);
+  // Events and vendors own other records — say what goes with them, and take it too
+  if (type === 'events') {
+    removed.cPays    = D.cPays.filter(p => p.evId === id);
+    removed.expenses = D.expenses.filter(x => x.evId === id);
+    photos = await getPhotosForEvent(id);
+  } else if (type === 'vendors') {
+    removed.vPays = D.vPays.filter(p => p.venId === id);
+  }
+  if (type === 'events' || type === 'vendors') {
+    const n = (len, w) => len ? `${len} ${w}${len > 1 ? 's' : ''}` : '';
+    const extra = [n(removed.cPays?.length, 'payment'), n(removed.expenses?.length, 'expense'),
+                   n(removed.vPays?.length, 'payment'), n(photos.length, 'photo')].filter(Boolean);
+    const ok = await askSheet({
+      title: `Delete ${rec.name}? – हटवायचे का?`,
+      message: extra.length ? `This also deletes ${extra.join(', ')} recorded for it.` : '',
+      actions: [{ label: 'Delete – हटवा', value: true, style: 'btn-danger' }]
+    });
+    if (!ok) return;
+  }
 
-  showToast('Deleted – हटवले');
-  if (refresh === 'evdetail' && refreshId) { showEvDetail(refreshId); return; }
-  if (refresh === 'vendetail' && refreshId) { showVenDetail(refreshId); return; }
-  renderPage(CT);
+  for (const [store, recs] of Object.entries(removed)) {
+    const ids = new Set(recs.map(r => r.id));
+    for (const r of recs) await deleteOne(store, r.id);
+    D[store] = D[store].filter(x => !ids.has(x.id));
+  }
+  for (const p of photos) await deletePhoto(p.id);
+
+  // Deleting the record whose page is open → leave that page
+  const leaving = (type === 'events' && CT === 'evdetail' && curRef === id) ||
+                  (type === 'vendors' && CT === 'vendetail' && curRef === id);
+  if (leaving) goBack(type === 'events' ? 'events' : 'vendors');
+  else refreshCurrent();
+
+  showToast('Deleted – हटवले', 'success', {
+    label: 'Undo – परत',
+    run: async () => {
+      for (const [store, recs] of Object.entries(removed)) {
+        for (const r of recs) await putOne(store, r);
+        D[store].push(...recs);
+      }
+      for (const p of photos) await putOne('photos', p);
+      refreshCurrent();
+      showToast('Restored – परत आणले');
+    }
+  });
+}
+
+// Delete from inside an edit sheet: close the sheet first, then delete with Undo
+async function deleteFromSheet(type, idField) {
+  const id = qv(idField);
+  await closeOverlay();
+  if (id) deleteRow(type, id);
 }
 
 /* ── PHOTOS ──────────────────────────────────────── */
 function triggerPhoto(evId) {
   pendingPhotoEvId = evId;
-  document.getElementById('photo-input').click();
+  q('photo-input').click();
 }
 
 async function handlePhotoInput(files) {
@@ -829,11 +1347,11 @@ async function handlePhotoInput(files) {
       ev.photoIds.push(photoId);
     }
     await putOne('events', ev);
-    showToast('Photo added – फोटो जोडला', 'success');
-    showEvDetail(pendingPhotoEvId);
+    showToast('Photo added – फोटो जोडला');
+    showEvDetail(pendingPhotoEvId, { fromHistory: true });
   } finally {
     showLoading(false);
-    document.getElementById('photo-input').value = '';
+    q('photo-input').value = '';
   }
 }
 
@@ -847,7 +1365,7 @@ function readFileAsDataUrl(file) {
 }
 
 function openLightbox(evId, photoId) {
-  const photos = document.querySelectorAll(`[data-action="lightbox"][data-evid="${evId}"]`);
+  const photos = document.querySelectorAll(`[data-action="lightbox"][data-evid="${CSS.escape(evId)}"]`);
   const ids    = Array.from(photos).map(p => p.dataset.photoid);
   const idx    = ids.indexOf(photoId);
   lightboxState = { evId, photoIds: ids, idx: Math.max(0, idx) };
@@ -855,18 +1373,24 @@ function openLightbox(evId, photoId) {
   if (!src) return;
   q('lb-img').src = src;
   q('lightbox').style.display = 'flex';
+  openOverlay(() => { q('lightbox').style.display = 'none'; });
 }
 
 async function deleteCurrentPhoto() {
   const { evId, photoIds, idx } = lightboxState;
   const photoId = photoIds[idx];
-  if (!confirm('Delete photo? – फोटो हटवायचा का?')) return;
+  const ok = await askSheet({
+    title: 'Delete photo? – फोटो हटवायचा का?',
+    message: 'This cannot be undone.',
+    actions: [{ label: 'Delete – हटवा', value: true, style: 'btn-danger' }]
+  });
+  if (!ok) return;
   await deletePhoto(photoId);
   const ev = D.events.find(e => e.id === evId);
   if (ev) { ev.photoIds = (ev.photoIds || []).filter(id => id !== photoId); await putOne('events', ev); }
-  q('lightbox').style.display = 'none';
+  await closeOverlay();
   showToast('Photo deleted – फोटो हटवला');
-  showEvDetail(evId);
+  showEvDetail(evId, { fromHistory: true });
 }
 
 /* ── LINK EXPENSES TO VENDOR ─────────────────────── */
@@ -877,36 +1401,37 @@ function openLinkModal(venId) {
 
   q('link-ven-id').value = venId;
   q('link-exp-list').innerHTML = unlinked.map(x => {
-    const ev      = D.events.find(e => e.id === x.evId);
+    const ev       = D.events.find(e => e.id === x.evId);
     const sameSpec = vn.specialty && x.head === vn.specialty;
     const sameCat  = x.cat === vn.cat;
-    return `<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer">
-      <input type="checkbox" value="${x.id}" ${sameSpec ? 'checked' : ''} style="width:18px;height:18px;margin-top:2px;accent-color:var(--accent);flex-shrink:0">
+    return `<label class="check-row">
+      <input type="checkbox" value="${esc(x.id)}" ${sameSpec ? 'checked' : ''}>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600">${x.head}</div>
-        <div class="b-sm" style="margin-top:1px">${ev?.name || '—'} · ${fmtDate(x.date)} · ${fmtCurrency(x.amt)}</div>
-        <div style="font-size:10px;margin-top:2px">
-          <span style="background:${sameCat?'rgba(234,88,12,.12)':'rgba(148,163,184,.1)'};color:${sameCat?'var(--accent)':'var(--muted)'};padding:1px 7px;border-radius:10px;font-weight:600">${x.cat}</span>
-          ${sameSpec ? '<span style="margin-left:4px;color:var(--green);font-weight:600">✓ matches – जुळते</span>' : ''}
+        <div class="title-sm">${esc(x.head)}</div>
+        <div class="meta"><span data-nl>${esc(ev?.name || '—')}</span> · ${fmtDate(x.date)} · ${fmtCurrency(x.amt)}</div>
+        <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
+          <span class="chip ${sameCat ? 'info' : ''}">${esc(x.cat)}</span>
+          ${sameSpec ? `<span class="chip pos">${tr('Matches', 'जुळते')}</span>` : ''}
         </div>
       </div>
     </label>`;
   }).join('');
-  q('link-modal').classList.add('active');
+  openSheet('link-modal');
 }
 
 async function saveLinkExpenses() {
   const venId   = qv('link-ven-id');
   const checked = [...document.querySelectorAll('#link-exp-list input[type=checkbox]:checked')].map(cb => cb.value);
-  if (!checked.length) { showToast('Select expense – खर्च निवडा', 'error'); return; }
+  if (!checked.length) { showToast('Select an expense – खर्च निवडा', 'error'); return; }
 
   for (const id of checked) {
     const x = D.expenses.find(e => e.id === id);
-    if (x) { x.venId = venId; await putOne('expenses', x); }
+    // Linking an existing expense records who supplied it; it was already paid
+    if (x) { x.venId = venId; if (!x.pay) x.pay = 'paid'; await putOne('expenses', x); }
   }
   closeModals();
-  showToast(`${checked.length} expense${checked.length > 1 ? 's' : ''} linked – जोडले ✓`, 'success');
-  showVenDetail(q('tab-vendetail').dataset.vnid);
+  showToast(`${checked.length} expense${checked.length > 1 ? 's' : ''} linked – जोडले`);
+  refreshCurrent();
 }
 
 /* ── EXPORT / IMPORT ─────────────────────────────── */
@@ -922,7 +1447,10 @@ async function exportData() {
     a.download    = `flavor-fusion-backup-${today()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast('Exported – निर्यात झाली ✓', 'success');
+    lastExport = new Date().toISOString();
+    await setMeta('last_export', lastExport);
+    showToast('Backup exported – निर्यात झाली');
+    if (CT === 'home') rHome();
   } finally { showLoading(false); }
 }
 
@@ -933,121 +1461,203 @@ async function handleImport(file) {
     try {
       const payload = JSON.parse(e.target.result);
 
-      // Validation
       if (!payload.version || !['ffv5', 'ffv2'].includes(payload.version)) {
         showToast('Invalid backup file – चुकीची फाईल', 'error'); return;
       }
-      const counts = `• ${(payload.events||[]).length} events\n• ${(payload.expenses||[]).length} expenses\n• ${(payload.cPays||[]).length} payments\n• ${(payload.vendors||[]).length} vendors`;
-      const mode = confirm(`Replace OR Merge?\n\nOK = Replace all data\nCancel = Merge (keep existing)\n\n${counts}`) ? 'replace' : 'merge';
+      const counts = `This backup has ${(payload.events||[]).length} events, ${(payload.expenses||[]).length} expenses, ${(payload.cPays||[]).length} payments and ${(payload.vendors||[]).length} vendors.`;
+      const mode = await askSheet({
+        title: 'Import backup – आयात',
+        message: `${counts}\n\nMerge keeps your current data. Replace deletes it first.`,
+        actions: [
+          { label: 'Merge – जोडा', value: 'merge', style: 'btn-primary' },
+          { label: 'Replace all data – सर्व बदला', value: 'replace', style: 'btn-danger' }
+        ]
+      });
+      if (!mode) return;
 
       showLoading(true);
       await importAllData(payload, mode);
       await loadAll();
       go('home');
-      showToast('Imported – आयात झाली ✓', 'success');
+      renderPage('home');
+      showToast('Imported – आयात झाली');
     } catch (err) {
       showToast('Import failed – आयात अयशस्वी', 'error');
       console.error(err);
     } finally {
       showLoading(false);
-      document.getElementById('import-input').value = '';
+      q('import-input').value = '';
     }
   };
   reader.readAsText(file);
 }
 
-/* ── DRAWER ──────────────────────────────────────── */
-function toggleDrawer() { document.getElementById('drawer').classList.toggle('active'); }
+/* ── SETTINGS PANEL ──────────────────────────────── */
+function openDrawer() {
+  const days = lastExport ? daysSince(lastExport.slice(0, 10)) : null;
+  q('backup-meta').textContent = days === null ? '· never' : days === 0 ? '· today' : `· ${days}d ago`;
+  q('drawer').classList.add('active');
+  q('drawer-toggle').setAttribute('aria-expanded', 'true');
+  openOverlay(() => {
+    q('drawer').classList.remove('active');
+    q('drawer-toggle').setAttribute('aria-expanded', 'false');
+  });
+}
 
-/* ── EVENT DELEGATION ────────────────────────────── */
+/* ── EVENT BINDING ───────────────────────────────── */
 function bindAllEvents() {
   // Delegated click handler for the entire body
   document.body.addEventListener('click', async e => {
     const el = e.target.closest('[data-action]');
     if (!el) return;
     e.stopPropagation();
-    const action    = el.dataset.action;
-    const id        = el.dataset.id;
-    const type      = el.dataset.type;
-    const refresh   = el.dataset.refresh;
-    const refreshId = el.dataset.refreshId;
+    const action = el.dataset.action;
+    const id     = el.dataset.id;
 
     switch (action) {
-      case 'go':          go(id); break;
-      case 'evdetail':    showEvDetail(id); break;
-      case 'vendetail':   showVenDetail(id); break;
-      case 'open-cpay':   openCPayModal(id); break;
-      case 'open-exp':    openExpModal(id); break;
-      case 'open-ev-edit':openEvModal(id); break;
-      case 'open-ven-edit':openVenModal(id); break;
-      case 'open-vpay':   openVPayModal(id); break;
-      case 'open-link':   openLinkModal(id); break;
-      case 'add-photo':   triggerPhoto(id); break;
-      case 'lightbox':    openLightbox(el.dataset.evid, el.dataset.photoid); break;
-      case 'delete':      await deleteRow(type, id, refresh, refreshId); break;
+      case 'go':           go(id); break;
+      case 'quick':
+        if (id === 'event')   { go('events');   openEvModal(); }
+        if (id === 'expense') openExpModal();   // record it right here, no page change
+        if (id === 'vendor')  { go('vendors');  openVenModal(); }
+        break;
+      case 'close-modal':
+      case 'close-lightbox': closeOverlay(); break;
+      case 'evdetail':     showEvDetail(id); break;
+      case 'vendetail':    showVenDetail(id); break;
+      case 'open-cpay':    openCPayModal(id); break;
+      case 'open-exp':     openExpModal(id); break;
+      case 'open-vpay':    openVPayModal(id); break;
+      case 'open-link':    openLinkModal(id); break;
+      case 'edit-exp':     openExpModal(D.expenses.find(x => x.id === id)); break;
+      case 'edit-cpay':    openCPayModal(null, id); break;
+      case 'edit-vpay':    openVPayModal(null, id); break;
+      case 'add-photo':    triggerPhoto(id); break;
+      case 'lightbox':     openLightbox(el.dataset.evid, el.dataset.photoid); break;
+      case 'delete':       await deleteRow(el.dataset.type, id); break;
+      case 'export':       exportData(); break;
+      case 'period':       period = id; writePref('ffv2_period', id); renderPage(CT); break;
+      case 'ev-filter':    F.ev = id; rEvents(); break;
+      case 'exp-filter':   F.exp = id; rExp(); break;
     }
   });
 
-  // Close modals on backdrop click
+  // Close sheets on backdrop tap
   document.querySelectorAll('.modal-ov').forEach(o => {
-    o.addEventListener('click', e => { if (e.target === o) closeModals(); });
+    o.addEventListener('click', e => { if (e.target === o) closeOverlay(); });
   });
 
-  // Photo input
-  q('photo-input').addEventListener('change', function () {
-    handlePhotoInput(this.files);
+  // Phone Back button / gesture
+  window.addEventListener('popstate', onPopState);
+
+  // Keyboard: Enter/Space on role=button cards, Escape closes the top overlay
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && overlays.length) { closeOverlay(); return; }
+    const el = e.target;
+    if ((e.key === 'Enter' || e.key === ' ') && el.getAttribute?.('role') === 'button') {
+      e.preventDefault();
+      el.click();
+    }
   });
 
-  // Import input
-  q('import-input').addEventListener('change', function () {
-    handleImport(this.files[0]);
+  // Header hairline once content scrolls under it…
+  // …and, on detail pages, the name fades into the header once its card scrolls away
+  const hdr = q('hdr');
+  window.addEventListener('scroll', () => {
+    hdr.classList.toggle('scrolled', window.scrollY > 4);
+    hdr.classList.toggle('past', window.scrollY > 64);
+  }, { passive: true });
+
+  // Header actions
+  q('hdr-back').addEventListener('click', () => goBack(CT === 'vendetail' ? 'vendors' : 'events'));
+  q('hdr-edit').addEventListener('click', () => {
+    if (CT === 'evdetail')  openEvModal(curRef);
+    if (CT === 'vendetail') openVenModal(curRef);
+  });
+  q('hdr-delete').addEventListener('click', () => {
+    if (CT === 'evdetail')  deleteRow('events', curRef);
+    if (CT === 'vendetail') deleteRow('vendors', curRef);
   });
 
-  // Form submit buttons (avoid inline onclick)
+  // Search boxes filter as you type
+  q('ev-q').addEventListener('input', e => { F.evQ = e.target.value.trim(); rEvents(); });
+  q('exp-q').addEventListener('input', e => { F.expQ = e.target.value.trim(); rExp(); });
+  q('ven-q').addEventListener('input', e => { F.venQ = e.target.value.trim(); rVen(); });
+
+  // Photo / import inputs
+  q('photo-input').addEventListener('change', function () { handlePhotoInput(this.files); });
+  q('import-input').addEventListener('change', function () { handleImport(this.files[0]); });
+
+  // Expense sheet controls
+  q('exp-cats').addEventListener('click', e => {
+    const b = e.target.closest('[data-cat]'); if (b) setExpCat(b.dataset.cat);
+  });
+  q('exp-pay').addEventListener('click', e => {
+    const b = e.target.closest('[data-pay]'); if (b) setExpPay(b.dataset.pay);
+  });
+  q('exp-vendor').addEventListener('change', e => {
+    if (e.target.value !== '__new') { e.target.dataset.prev = e.target.value; return; }
+    e.target.value = e.target.dataset.prev || '';
+    pickVendorForExpense = true;
+    openVenModal();
+  });
+
+  // Sheet buttons
   q('btn-save-event').addEventListener('click', saveEvent);
-  q('btn-save-exp').addEventListener('click', saveExpense);
+  q('btn-save-exp').addEventListener('click', () => saveExpense());
+  q('btn-save-exp-next').addEventListener('click', () => saveExpense({ next: true }));
+  q('btn-del-exp').addEventListener('click', () => deleteFromSheet('expenses', 'exp-id'));
   q('btn-save-cpay').addEventListener('click', saveCPay);
+  q('btn-del-cpay').addEventListener('click', () => deleteFromSheet('cPays', 'cpay-id'));
   q('btn-save-ven').addEventListener('click', saveVendor);
   q('btn-save-vpay').addEventListener('click', saveVPay);
+  q('btn-del-vpay').addEventListener('click', () => deleteFromSheet('vPays', 'vpay-id'));
   q('btn-save-link').addEventListener('click', saveLinkExpenses);
 
-  // Theme / drawer / fab
-  q('theme-btn').addEventListener('click', toggleTheme);
-  q('drawer-toggle').addEventListener('click', toggleDrawer);
-  q('fab').addEventListener('click', fabAction);
+  // Settings panel / FAB
+  q('drawer-toggle').addEventListener('click', openDrawer);
+  q('drawer-bg').addEventListener('click', () => closeOverlay());
+  q('fab').addEventListener('click', () => FAB[CT]?.run());
 
-  // Nav items
-  ['home','events','expenses','vendors','summary'].forEach(id => {
-    q('n-' + id)?.addEventListener('click', () => go(id));
-    q('d-' + id)?.addEventListener('click', () => { go(id); toggleDrawer(); });
-  });
+  // Bottom nav
+  TOP_TABS.forEach(id => q('n-' + id).addEventListener('click', () => go(id)));
 
-  // Expense category change
-  q('exp-cat').addEventListener('change', () => loadExpHeads());
+  // Dependent select
   q('ven-cat').addEventListener('change', () => loadVenSpecialty());
-  q('vpay-cat').addEventListener('change', () => loadVPayHead());
 
-  // Export / Import buttons
-  q('btn-export').addEventListener('click', () => { exportData(); toggleDrawer(); });
-  q('btn-import').addEventListener('click', () => { q('import-input').click(); toggleDrawer(); });
-  q('btn-set-pin').addEventListener('click', () => { toggleDrawer(); showPinScreen('set'); });
-  q('btn-remove-pin').addEventListener('click', () => { toggleDrawer(); removePin(); });
+  // Settings
+  document.querySelectorAll('[data-theme-set]').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.themeSet)));
+  document.querySelectorAll('[data-lang-set]').forEach(b => b.addEventListener('click', () => { setLang(b.dataset.langSet); syncSettingsUI(); }));
+  q('btn-export').addEventListener('click', async () => { await closeOverlay(); exportData(); });
+  // File picker must open inside the tap itself, so click first, then close the panel
+  q('btn-import').addEventListener('click', () => { q('import-input').click(); closeOverlay(); });
+  q('btn-set-pin').addEventListener('click', async () => { await closeOverlay(); showPinScreen('set'); });
+  q('btn-remove-pin').addEventListener('click', async () => { await closeOverlay(); removePin(); });
 
   // Lightbox
   q('lb-delete').addEventListener('click', deleteCurrentPhoto);
-  q('lightbox').addEventListener('click', e => { if (e.target === q('lightbox')) q('lightbox').style.display = 'none'; });
+  q('lightbox').addEventListener('click', e => { if (e.target === q('lightbox')) closeOverlay(); });
+}
 
-  // PIN pad
+// The PIN screen exists before launchApp() binds everything else
+function bindPinScreen() {
   document.querySelectorAll('.pin-key').forEach(key => {
     key.addEventListener('click', () => pinKey(key.dataset.val));
   });
   q('pin-alt').addEventListener('click', async () => {
-    const confirmed = confirm('Bypass PIN? Export your data first!\nPIN बायपास करायचे का?');
-    if (confirmed) { q('pin-screen').classList.remove('active'); launchApp(); }
+    const ok = await askSheet({
+      title: 'Forgot PIN? – पिन विसरलात?',
+      message: 'Opening without the PIN removes the PIN lock. Set a new one from Settings.',
+      actions: [{ label: 'Open & remove PIN – पिन काढा', value: true, style: 'btn-danger' }]
+    });
+    if (!ok) return;
+    await setMeta('pin_hash', null);
+    q('pin-screen').classList.remove('active');
+    launchApp();
   });
 }
 
-/* ── EXPOSE to HTML for PWA install prompt (optional) ── */
-window.FF = { exportData, toggleDrawer };
+window.FF = { exportData, openDrawer };
 
+bindPinScreen();
 boot();

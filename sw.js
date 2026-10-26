@@ -3,7 +3,8 @@
  * Fully offline-capable caching for PWA & Android TWA
  */
 
-const CACHE_NAME = 'flavor-fusion-v2-cache-v1';
+const CACHE_NAME = 'flavor-fusion-v2-cache-v4';
+// The Classic FFexp / FFmobile pages are retired: no longer linked or cached offline
 const PRECACHE = [
   './',
   './index.html',
@@ -11,9 +12,9 @@ const PRECACHE = [
   './app.js',
   './db.js',
   './utils.js',
+  './icons.js',
+  './i18n.js',
   './manifest.json',
-  './FFmobile.html',
-  './FFexp.html',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png'
