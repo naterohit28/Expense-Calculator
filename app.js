@@ -102,13 +102,19 @@ async function boot() {
   syncSettingsUI();
   period = readPref('ffv2_period', 'all');
   if (!PERIODS[period]) period = 'all';
-  window.addEventListener('ffdb-blocked', () => {
-    q('loading-text').innerHTML = 'Updating the app…<br>Close any other open Flavor Fusion tab or app window to finish.' +
-      '<br><span lang="mr">अ‍ॅप अपडेट होत आहे… इतर उघडे Flavor Fusion टॅब/विंडो बंद करा.</span>';
-  });
+  // Storage normally opens in well under a second. If it hasn't after 4s, an older copy
+  // of the app is holding it (the browser only signals "blocked" to the first waiter),
+  // so explain what to do instead of spinning silently.
+  const explainStuck = () => {
+    q('loading-text').innerHTML = 'Updating the app…<br>Close any other open Flavor Fusion tab or app window, then reopen this one.' +
+      '<br><span lang="mr">अ‍ॅप अपडेट होत आहे… इतर उघडे Flavor Fusion टॅब/विंडो बंद करा आणि हे पुन्हा उघडा.</span>';
+  };
+  window.addEventListener('ffdb-blocked', explainStuck);
+  const stuckTimer = setTimeout(explainStuck, 4000);
   showLoading(true);
   try {
     await checkAndMigrate();
+    clearTimeout(stuckTimer);
     await loadAll();
     await seedIfEmpty();
     lastExport = await getMeta('last_export');
