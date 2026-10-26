@@ -10,12 +10,19 @@ const DB_VERSION = 4;   // v3: photos indexed by eventId · v4: bill photos inde
 const STORES     = ['events','expenses','vendors','cPays','vPays','photos','meta'];
 
 let _db = null;
+let _opening = null;   // one open request at a time, however many callers
 
 /* ── OPEN / INIT ─────────────────────────────────── */
 export function openDB() {
-  return new Promise((resolve, reject) => {
-    if (_db) { resolve(_db); return; }
+  if (_db) return Promise.resolve(_db);
+  if (_opening) return _opening;
+  _opening = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+
+    // An older copy of the app is still open elsewhere (another tab, the installed app
+    // window) and holds the old version. Tell the user instead of spinning forever;
+    // the upgrade continues by itself once that copy closes.
+    req.onblocked = () => window.dispatchEvent(new CustomEvent('ffdb-blocked'));
 
     req.onupgradeneeded = e => {
       const db = e.target.result;
@@ -31,9 +38,16 @@ export function openDB() {
       if (!photos.indexNames.contains('expenseId')) photos.createIndex('expenseId', 'expenseId');
     };
 
-    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
-    req.onerror   = e => reject(e.target.error);
+    req.onsuccess = e => {
+      _db = e.target.result;
+      // A newer version wants to upgrade: step aside and reload into it, so updates
+      // never get stuck behind this copy
+      _db.onversionchange = () => { _db.close(); _db = null; location.reload(); };
+      resolve(_db);
+    };
+    req.onerror = e => { _opening = null; reject(e.target.error); };
   });
+  return _opening;
 }
 
 /* ── GENERIC CRUD ────────────────────────────────── */
