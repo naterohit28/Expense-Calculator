@@ -25,17 +25,17 @@ internal static class FlavorFusionDesktop {
         Application.EnableVisualStyles();
         edge = FindEdge();
         if (!created) { Open(); return; }
-        if (edge == null) { MessageBox.Show("Microsoft Edge is required for this desktop test app.", "Flavor Fusion Desktop Test"); return; }
-        if (!File.Exists(Path.Combine(Root, "index.html"))) { MessageBox.Show("Extract the entire ZIP first. Keep the app folder beside this executable.", "Flavor Fusion Desktop Test"); return; }
+        if (edge == null) { MessageBox.Show("Microsoft Edge is required for this desktop test app.", "CaterDesk Desktop Test"); return; }
+        if (!File.Exists(Path.Combine(Root, "index.html"))) { MessageBox.Show("Extract the entire ZIP first. Keep the app folder beside this executable.", "CaterDesk Desktop Test"); return; }
         try {
             listener = new TcpListener(IPAddress.Loopback, Port); listener.Start();
             var thread = new Thread(Serve); thread.IsBackground = true; thread.Start();
-        } catch (Exception e) { MessageBox.Show("Cannot open the local test server. Close another desktop test copy and retry.\n" + e.Message, "Flavor Fusion Desktop Test"); return; }
-        tray = new NotifyIcon(); tray.Icon = SystemIcons.Application;
-        tray.Text = "Flavor Fusion Desktop Test v2.4.4";
+        } catch (Exception e) { MessageBox.Show("Cannot open the local test server. Close another desktop test copy and retry.\n" + e.Message, "CaterDesk Desktop Test"); return; }
+        tray = new NotifyIcon(); tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        tray.Text = "CaterDesk Desktop Test v2.4.5";
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Open Flavor Fusion", null, delegate { Open(); });
-        menu.Items.Add("About test storage", null, delegate { MessageBox.Show("This desktop test app uses a separate Edge profile. Its records are local to this computer and do not sync with your phone. Use Share/save backup before moving records.\n\nData folder:\n" + Profile(), "Flavor Fusion Desktop Test v2.4.4"); });
+        menu.Items.Add("Open CaterDesk", null, delegate { Open(); });
+        menu.Items.Add("About test storage", null, delegate { MessageBox.Show("This desktop test app uses a separate Edge profile. Its records are local to this computer and do not sync with your phone. Use Share/save backup before moving records.\n\nData folder:\n" + Profile(), "CaterDesk Desktop Test v2.4.5"); });
         menu.Items.Add("Exit test server", null, delegate { Application.Exit(); });
         tray.ContextMenuStrip = menu; tray.DoubleClick += delegate { Open(); }; tray.Visible = true;
         Application.ApplicationExit += delegate { tray.Visible = false; tray.Dispose(); listener.Stop(); singleInstance.ReleaseMutex(); };
@@ -73,7 +73,7 @@ internal static class FlavorFusionDesktop {
                     bool head = parts[0] == "HEAD";
                     if (parts[0] != "GET" && !head) { Reply(stream, 405, "text/plain", Encoding.UTF8.GetBytes("GET and HEAD only"), false); return; }
                     var raw = parts[1].Split('?')[0]; var path = Uri.UnescapeDataString(raw);
-                    if (path == "/health") { Reply(stream, 200, "application/json", Encoding.UTF8.GetBytes("{\"app\":\"FlavorFusionDesktopTest\",\"version\":\"2.4.4\"}"), head); return; }
+                    if (path == "/health") { Reply(stream, 200, "application/json", Encoding.UTF8.GetBytes("{\"app\":\"FlavorFusionDesktopTest\",\"version\":\"2.4.5\"}"), head); return; }
                     foreach (var segment in path.Split('/')) if (segment.StartsWith(".")) { Reply(stream, 403, "text/plain", new byte[0], head); return; }
                     if (path == "/") path = "/index.html";
                     var file = Path.GetFullPath(Path.Combine(Root, path.TrimStart('/').Replace('/', Path.DirectorySeparatorChar)));

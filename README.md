@@ -1,8 +1,14 @@
-# Flavor Fusion — Catering & Event Expense Tracker
+# CaterDesk — Catering & Event Expense Tracker
+
+*Every event. Every expense. Clear profit.*
+
+CaterDesk was previously named Flavor Fusion. This branding update preserves the Android package, signing certificate, IndexedDB database and desktop profile so existing records remain in place. Back up records before installing any update.
+
+The icon uses a bold serving cloche above two ledger lines, with deep teal (`#123F40`), warm ivory (`#F8F4EA`) and a copper accent (`#BD805B`). Its artwork contains no lettering. The editable master is `public/icons/caterdesk.svg`.
 
 An offline-first app for recording event expenses, client collections, vendor purchases and payments, with bill photographs and event profitability views.
 
-**Current release: v2.4.4** · Android package: `com.flavorfusion.expenses`
+**Current release: v2.4.5** · Android package: `com.flavorfusion.expenses`
 
 [Open the live app](https://expense-calculator-kohl.vercel.app/) · [Download releases](https://github.com/naterohit28/Expense-Calculator/releases) · [Reliability notes](docs/RELIABILITY.md) · [Report a bug](https://github.com/naterohit28/Expense-Calculator/issues)
 
@@ -116,28 +122,28 @@ For safe testing, import a **copy** into the desktop test app or a separate brow
 2. Export a backup from the existing app.
 3. Transfer the APK to the phone and install it **over the existing app**. Android may ask you to allow installation from the application used to open the file.
 4. Close the APK and any browser tabs open to the same site, then reopen it.
-5. Check the web build shown in **Settings**; the current expected value is **v2.4.4**.
+5. Check the web build shown in **Settings**; the current expected value is **v2.4.5**.
 
 Do not uninstall the old app or clear Chrome/site data just to force an update. If Android refuses an update because of a signing conflict, stop and check the package/signing identity first.
 
-The v2.4.4 APK has versionCode **5** and uses the same signer as the supplied earlier APKs. Its v2/v3 signatures and ZIP alignment were verified during preparation. The public certificate association is in [`.well-known/assetlinks.json`](public/.well-known/assetlinks.json).
+The v2.4.5 APK has versionCode **6** and uses the same signer as the supplied earlier APKs. Its v2/v3 signatures and ZIP alignment were verified during preparation. The public certificate association is in [`.well-known/assetlinks.json`](public/.well-known/assetlinks.json).
 
 The **APK version and cached web build are separate**. Installing a new wrapper does not itself guarantee that an already-open browser client has activated the newest service worker. A service-worker update waits for old clients to close to avoid changing app files during an active form.
 
 ## Windows desktop test app
 
-1. Download `FlavorFusion-Desktop-v2.4.4.zip` from [Releases](https://github.com/naterohit28/Expense-Calculator/releases).
+1. Download `CaterDesk-Desktop-v2.4.5.zip` from [Releases](https://github.com/naterohit28/Expense-Calculator/releases).
 2. Extract the **entire ZIP** into a folder.
-3. Keep the `app` directory beside `FlavorFusion-Desktop.exe`.
-4. Run `FlavorFusion-Desktop.exe`.
+3. Keep the `app` directory beside `CaterDesk-Desktop.exe`.
+4. Run `CaterDesk-Desktop.exe`.
 
-The launcher opens Microsoft Edge in an app window. A system-tray icon offers **Open Flavor Fusion**, storage information and **Exit test server**.
+The launcher opens Microsoft Edge in an app window. A system-tray icon offers **Open CaterDesk**, storage information and **Exit test server**.
 
 No Node.js, Python or administrator installation is required to use the prepared desktop package. The launcher is an unsigned local Windows test executable, not a Microsoft Store installer.
 
 - Fixed local address: `http://127.0.0.1:19891/`
 - Dedicated profile: `%LOCALAPPDATA%\FlavorFusionDesktopTest\EdgeProfile`
-- Included web build: v2.4.4
+- Included web build: v2.4.5
 
 Desktop test records are separate from the phone and normal browser profiles. Import a backup copy if you want to test existing records. The desktop package does not automatically update from the website; download a new package for a newer packaged build. Replacing app assets does not require deleting the profile.
 
@@ -190,12 +196,12 @@ Mobile-sized browser tests and simulated time are not a certification of physica
 On Windows, from the repository root:
 
 ```powershell
-.\desktop\build.ps1 -OutputDirectory C:\Temp\FlavorFusion-Desktop
+.\desktop\build.ps1 -OutputDirectory C:\Temp\CaterDesk-Desktop
 ```
 
 Choose a dedicated output directory. The script compiles the launcher using the Windows .NET Framework C# compiler and copies only the required web assets and instructions into the package.
 
-The output contains `FlavorFusion-Desktop.exe`, `README.txt` and `app/`. Distribute the whole directory as a ZIP. Do not include browser profile data or phone backups.
+The output contains `CaterDesk-Desktop.exe`, `README.txt` and `app/`. Distribute the whole directory as a ZIP. Do not include browser profile data or phone backups.
 
 The launcher binds to loopback, serves allowed static app types, rejects non-local Host headers and traversal/dot-file paths, and supplies browser security headers. It does not expose a business-data API or upload records to a server.
 
@@ -253,7 +259,7 @@ The owner's Downloads workspace is organized separately from the Git repository:
 Expense-Calculator-main/
 ├── START-HERE.txt
 ├── Apps/
-│   ├── FlavorFusion-v2.4.4.apk
+│   ├── CaterDesk-v2.4.5.apk
 │   └── Desktop/               Extracted Windows test app
 ├── Project/
 │   ├── Web/                  This Git checkout

@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════
-   Flavor Fusion v2 — styles.css
+   CaterDesk v2 — styles.css
    Design tokens + component library
 
    Colour carries meaning, nothing else:
@@ -30,10 +30,10 @@
 }
 
 html.light {
-  --bg: #F6F7F9; --surface: #FFFFFF; --surface-2: #F1F3F6; --scrim: rgba(15,23,42,.45);
-  --line: #E3E7ED; --line-strong: #CBD2DC;
-  --text: #0F172A; --text-2: #475569; --text-3: #64748B;
-  --brand: #C2410C; --brand-press: #9A3412; --brand-text: #C2410C; --brand-soft: #FFF1E8; --on-brand: #FFFFFF;
+  --bg: #F8F4EA; --surface: #FFFCF5; --surface-2: #EFEADF; --scrim: rgba(15,23,42,.45);
+  --line: #DDDCD2; --line-strong: #BBC8C2;
+  --text: #173333; --text-2: #465E5A; --text-3: #596B65;
+  --brand: #123F40; --brand-press: #0B2E2F; --brand-text: #123F40; --brand-soft: #E1ECE5; --on-brand: #F8F4EA; --accent: #9C613F;
   --pos: #047857; --pos-soft: #E6F6EE;
   --due: #B45309; --due-soft: #FEF3E2;
   --neg: #B91C1C; --neg-soft: #FDECEC;
@@ -43,10 +43,10 @@ html.light {
   color-scheme: light;
 }
 html.dark {
-  --bg: #0B1220; --surface: #131C2E; --surface-2: #1A2539; --scrim: rgba(0,0,0,.6);
-  --line: #24314A; --line-strong: #33415C;
-  --text: #F1F5F9; --text-2: #A7B3C6; --text-3: #8492A9;
-  --brand: #C2410C; --brand-press: #9A3412; --brand-text: #FB923C; --brand-soft: rgba(249,115,22,.14); --on-brand: #FFFFFF;
+  --bg: #0D2425; --surface: #143334; --surface-2: #1D4141; --scrim: rgba(0,0,0,.6);
+  --line: #315353; --line-strong: #456968;
+  --text: #F8F4EA; --text-2: #C0CEC6; --text-3: #A0B6AD;
+  --brand: #A4D6CB; --brand-press: #8DC5B9; --brand-text: #A4D6CB; --brand-soft: #204848; --on-brand: #123F40; --accent: #D99D76;
   --pos: #34D399; --pos-soft: rgba(52,211,153,.13);
   --due: #FBBF24; --due-soft: rgba(251,191,36,.13);
   --neg: #F87171; --neg-soft: rgba(248,113,113,.13);
@@ -513,3 +513,7 @@ html.light #toast-action { color: #FDBA74; background: rgba(253,186,116,.14); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
 }
+
+/* Brand accent remains decorative; financial status colours retain their meaning. */
+.d-brand { border-bottom: 2px solid var(--accent); padding-bottom: 16px; }
+.d-brand .meta { max-width: 220px; line-height: 1.5; }

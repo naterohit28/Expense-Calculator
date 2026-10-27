@@ -1,13 +1,13 @@
 {
-  "name": "Flavor Fusion Business",
-  "short_name": "FlavorFusion",
-  "description": "Flavor Fusion Business Operating System — private, offline-first catering & expense tracker",
+  "name": "CaterDesk",
+  "short_name": "CaterDesk",
+  "description": "Every event. Every expense. Clear profit.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#0B1220",
-  "theme_color": "#0B1220",
+  "background_color": "#0D2425",
+  "theme_color": "#0D2425",
   "icons": [
     {
       "src": "icons/icon-192.png",
@@ -28,7 +28,10 @@
       "purpose": "maskable"
     }
   ],
-  "categories": ["business", "finance"],
+  "categories": [
+    "business",
+    "finance"
+  ],
   "lang": "en",
   "dir": "ltr"
 }

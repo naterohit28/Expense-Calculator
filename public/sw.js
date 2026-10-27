@@ -1,6 +1,6 @@
 /** Offline release cache: install the complete app, then serve that release consistently. */
 
-const CACHE_NAME = 'flavor-fusion-v2-cache-v13';
+const CACHE_NAME = 'flavor-fusion-v2-cache-v14';
 // The Classic FFexp / FFmobile pages are retired: no longer linked or cached offline
 const PRECACHE = [
   './',

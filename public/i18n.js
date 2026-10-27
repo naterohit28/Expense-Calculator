@@ -1,5 +1,5 @@
 /**
- * i18n.js — Flavor Fusion v2
+ * i18n.js — CaterDesk v2
  * Language display: 'both' (English – मराठी), 'en' or 'mr'.
  *
  * The app's copy is written as "English – मराठी" pairs, and stored data

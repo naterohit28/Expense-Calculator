@@ -1,5 +1,5 @@
 /**
- * db.js — Flavor Fusion v2
+ * db.js — CaterDesk v2
  * IndexedDB data layer with localStorage migration
  * Stores: events, expenses, vendors, cPays, vPays
  * Images stored separately in 'photos' store (blob/base64)
@@ -485,7 +485,7 @@ export async function importAllData(payload, mode = 'replace', { migration = fal
     });
   }));
 }
-export const APP_VERSION = '2.4.4';
+export const APP_VERSION = '2.4.5';
 export async function checkAndMigrate() {
   await openDB();
   const storedVer = await getMeta('app_version');
