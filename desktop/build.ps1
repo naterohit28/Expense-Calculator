@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
-$sourceRoot = Split-Path $PSScriptRoot -Parent
+$repositoryRoot = Split-Path $PSScriptRoot -Parent
+$sourceRoot = Join-Path $repositoryRoot 'public'
 $outputRoot = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $outputRoot, (Join-Path $outputRoot 'app'), (Join-Path $outputRoot 'app\icons') | Out-Null
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'

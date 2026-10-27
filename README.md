@@ -4,7 +4,7 @@ An offline-first app for recording event expenses, client collections, vendor pu
 
 **Current release: v2.4.4** · Android package: `com.flavorfusion.expenses`
 
-[Open the live app](https://expense-calculator-kohl.vercel.app/) · [Download releases](https://github.com/naterohit28/Expense-Calculator/releases) · [Reliability notes](RELIABILITY.md) · [Report a bug](https://github.com/naterohit28/Expense-Calculator/issues)
+[Open the live app](https://expense-calculator-kohl.vercel.app/) · [Download releases](https://github.com/naterohit28/Expense-Calculator/releases) · [Reliability notes](docs/RELIABILITY.md) · [Report a bug](https://github.com/naterohit28/Expense-Calculator/issues)
 
 ## Contents
 
@@ -62,7 +62,7 @@ The Android app is a **Trusted Web Activity** wrapper around the hosted site. Th
 - Interrupted bill attachments are recovered as drafts at the next launch.
 - Modal/history cleanup and background/PIN recovery preserve open form values in the tested scenarios.
 
-See [RELIABILITY.md](RELIABILITY.md) for the detailed release changes and validation scope.
+See [reliability notes](docs/RELIABILITY.md) for the detailed release changes and validation scope.
 
 ## Where your records are stored
 
@@ -120,7 +120,7 @@ For safe testing, import a **copy** into the desktop test app or a separate brow
 
 Do not uninstall the old app or clear Chrome/site data just to force an update. If Android refuses an update because of a signing conflict, stop and check the package/signing identity first.
 
-The v2.4.4 APK has versionCode **5** and uses the same signer as the supplied earlier APKs. Its v2/v3 signatures and ZIP alignment were verified during preparation. The public certificate association is in [`.well-known/assetlinks.json`](.well-known/assetlinks.json).
+The v2.4.4 APK has versionCode **5** and uses the same signer as the supplied earlier APKs. Its v2/v3 signatures and ZIP alignment were verified during preparation. The public certificate association is in [`.well-known/assetlinks.json`](public/.well-known/assetlinks.json).
 
 The **APK version and cached web build are separate**. Installing a new wrapper does not itself guarantee that an already-open browser client has activated the newest service worker. A service-worker update waits for old clients to close to avoid changing app files during an active form.
 
@@ -152,7 +152,7 @@ The production app is plain HTML, CSS and JavaScript modules. It does not need a
 ```sh
 git clone https://github.com/naterohit28/Expense-Calculator.git
 cd Expense-Calculator
-python -m http.server 8790 --bind 127.0.0.1
+python -m http.server 8790 --bind 127.0.0.1 --directory public
 ```
 
 Open **http://127.0.0.1:8790/** in the browser. If your Python installation uses `python3`, use that command instead. Another static HTTP server is also suitable.
@@ -221,24 +221,26 @@ Keep signing-key and password recovery backups protected. Windows-user-encrypted
 ```text
 Expense-Calculator/
 ├── README.md                 Usage, setup, backups and maintenance
-├── RELIABILITY.md            Detailed reliability changes and test scope
-├── index.html                App shell, screens and forms
-├── app.js                    UI state, navigation, entry forms and reports
-├── db.js                     IndexedDB, transactions, attachments and import/export
-├── utils.js                  Validation, calculations, dates and constants
-├── i18n.js                   Language display
-├── icons.js                  UI icon definitions
-├── styles.css                Responsive UI styles
-├── manifest.json             Web app installation metadata
-├── sw.js                     Offline release cache
-├── register-sw.js            Service-worker registration/update check
-├── vercel.json               Hosting security/cache headers
-├── .well-known/assetlinks.json Android package/certificate association
-├── icons/                    App icons
-├── desktop/                  Windows launcher source and build script
-├── tests/                    Isolated browser regression suites
 ├── package.json              Development/test commands
-└── package-lock.json         Locked test dependencies
+├── package-lock.json         Locked test dependencies
+├── vercel.json               Deploy public/ and apply security/cache headers
+├── public/                   Only the files served to app users
+│   ├── index.html            Screens and forms
+│   ├── app.js                UI, navigation, entry forms and reports
+│   ├── db.js                 IndexedDB, transactions, attachments and backups
+│   ├── utils.js              Validation, calculations and constants
+│   ├── i18n.js               Language display
+│   ├── icons.js              UI icon definitions
+│   ├── styles.css            Responsive UI
+│   ├── manifest.json         Web app installation metadata
+│   ├── sw.js                 Offline release cache
+│   ├── register-sw.js        Service-worker registration/update check
+│   ├── icons/                App icons
+│   └── .well-known/assetlinks.json Android certificate association
+├── desktop/                  Windows launcher source, build script and instructions
+├── tests/                    Isolated browser regression suites
+└── docs/
+    └── RELIABILITY.md         Reliability changes and validation scope
 ```
 
 `node_modules/` and `test-artifacts/` are local generated directories and are not committed.
@@ -272,7 +274,7 @@ The source paths in the local launch configuration and Android signing manifest 
 
 ## Deployment and release checklist
 
-The current hosted site deploys from this repository's main branch on Vercel. Keep the web files at the repository root unless the hosting root is explicitly reconfigured. The outer local folder organization does not change that layout.
+The current hosted site deploys from this repository's main branch on Vercel. Vercel's output directory is explicitly set to `public/`. Keep the Vercel project root at the repository root so `vercel.json` is read. Development files, tests and documentation are outside the public output. The outer local folder organization does not change the deployed app URLs.
 
 1. Keep a phone backup before testing a new release.
 2. Make the change on a branch and run the appropriate checks, including `npm test` for application changes and `git diff --check`.
