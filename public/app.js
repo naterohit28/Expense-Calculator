@@ -1,5 +1,5 @@
 /**
- * app.js — Flavor Fusion v2
+ * app.js — CaterDesk v2
  * UI logic: rendering, sheets, navigation, events
  * Imports from db.js, utils.js, icons.js and i18n.js
  */
@@ -23,7 +23,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '2.4.4';
+const APP_BUILD = '2.4.5';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -156,8 +156,8 @@ async function boot() {
   // of the app is holding it (the browser only signals "blocked" to the first waiter),
   // so explain what to do instead of spinning silently.
   const explainStuck = () => {
-    q('loading-text').innerHTML = 'Updating the app…<br>Close any other open Flavor Fusion tab or app window, then reopen this one.' +
-      '<br><span lang="mr">अ‍ॅप अपडेट होत आहे… इतर उघडे Flavor Fusion टॅब/विंडो बंद करा आणि हे पुन्हा उघडा.</span>';
+    q('loading-text').innerHTML = 'Updating the app…<br>Close any other open CaterDesk tab or app window, then reopen this one.' +
+      '<br><span lang="mr">अ‍ॅप अपडेट होत आहे… इतर उघडे CaterDesk टॅब/विंडो बंद करा आणि हे पुन्हा उघडा.</span>';
   };
   window.addEventListener('ffdb-blocked', explainStuck);
   const stuckTimer = setTimeout(explainStuck, 4000);
@@ -251,7 +251,7 @@ function hideToast() {
 
 /* ── THEME / LANGUAGE ────────────────────────────── */
 // Status bar colour matches the header, which is the page background
-const THEME_BAR = { dark: '#0B1220', light: '#F6F7F9' };
+const THEME_BAR = { dark: '#0D2425', light: '#F8F4EA' };
 
 function applyTheme(t) {
   document.documentElement.classList.remove('dark', 'light');
@@ -484,7 +484,7 @@ function restorePage(st) {
 const TOP_TABS = ['home', 'events', 'expenses', 'vendors', 'summary'];
 
 const PAGE_TITLE = {
-  home: 'Flavor Fusion', events: 'Events – कार्यक्रम', expenses: 'Expenses – खर्च',
+  home: 'CaterDesk', events: 'Events – कार्यक्रम', expenses: 'Expenses – खर्च',
   vendors: 'Vendors – विक्रेते', summary: 'Reports – अहवाल'
 };
 
@@ -824,7 +824,7 @@ function costingBlock(pl, noCosts) {
 }
 
 function reminderLink(ev, pending) {
-  const msg = `Namaste! A gentle reminder from Flavor Fusion: ${fmtCurrency(pending)} is pending for ${ev.name} (${fmtDate(ev.date)}). Kindly arrange the payment. Thank you!\n\n`
+  const msg = `Namaste! A gentle reminder from CaterDesk: ${fmtCurrency(pending)} is pending for ${ev.name} (${fmtDate(ev.date)}). Kindly arrange the payment. Thank you!\n\n`
             + `नमस्कार! ${ev.name} साठी ${fmtCurrency(pending)} बाकी आहे. कृपया देयक करावे. धन्यवाद!`;
   return `https://wa.me/${phoneDigits(ev.mobile)}?text=${encodeURIComponent(msg)}`;
 }
@@ -1865,13 +1865,13 @@ async function exportData() {
   showLoading(true);
   try {
     const payload = await exportAllData();
-    file = new File([JSON.stringify(payload)], `flavor-fusion-backup-${today()}.json`, { type: 'application/json' });
+    file = new File([JSON.stringify(payload)], `caterdesk-backup-${today()}.json`, { type: 'application/json' });
   } finally { showLoading(false); }
 
   let how = 'download';
   if (navigator.canShare?.({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], title: 'Flavor Fusion backup', text: `Flavor Fusion backup ${fmtDate(today())}` });
+      await navigator.share({ files: [file], title: 'CaterDesk backup', text: `CaterDesk backup ${fmtDate(today())}` });
       how = 'shared';
     } catch (e) {
       if (e.name === 'AbortError') return;   // closed the share sheet: nothing was saved
