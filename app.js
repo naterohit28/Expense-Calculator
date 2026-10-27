@@ -23,7 +23,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '2.4.1';
+const APP_BUILD = '2.4.2';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -111,7 +111,7 @@ async function runSave(key, task) {
   const buttons = [...document.querySelectorAll('[id^="btn-save-"]')];
   buttons.forEach(b => b.disabled = true);
   try { await task(); changesChannel?.postMessage('changed'); }
-  catch (e) { console.error(e); showToast(e.message?.includes('changed in another') ? e.message : 'Could not save. Your entry is still here. Check free storage and try again. – जतन झाले नाही', 'error'); }
+  catch (e) { console.error(e); const msg = e.message?.includes('changed in another') ? e.message : (e.message && e.message !== 'full' ? 'Could not save: ' + e.message + ' – जतन झाले नाही' : 'Could not save. Your entry is still here. Check free storage and try again. – जतन झाले नाही'); showToast(msg, 'error'); }
   finally { activeSaves.delete(key); if (!activeSaves.size) buttons.forEach(b => b.disabled = false); }
 }
 window.addEventListener('ff-migration-error', e => showToast('Legacy data could not be migrated. Originals were kept. ' + e.detail, 'error'));
@@ -177,6 +177,7 @@ async function loadAll() {
   const expenses = allExpenses.filter(x => !x.draft);
   const drafts   = allExpenses.filter(x => x.draft).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   D = { events, expenses, drafts, vendors, cPays, vPays };
+  if (typeof window !== 'undefined') window.D = D;
 }
 
 // Drafts are "expenses" in storage but a separate list in memory
@@ -1336,12 +1337,13 @@ function setExpPay(pay) {
 }
 
 function populateVendorSelect(selected = '') {
+  const selStr = String(selected ?? '').trim();
   populateSelect('exp-vendor', [
     { v: '', l: 'None – कोणी नाही' },
-    ...[...D.vendors].sort((a, b) => a.name.localeCompare(b.name)).map(v => ({ v: v.id, l: v.name })),
+    ...[...D.vendors].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).map(v => ({ v: String(v.id), l: v.name })),
     { v: '__new', l: '+ New vendor – नवीन विक्रेता' }
-  ], selected);
-  q('exp-vendor').dataset.prev = selected;
+  ], selStr);
+  q('exp-vendor').dataset.prev = selStr;
 }
 
 function openExpModal(arg) {

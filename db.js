@@ -94,8 +94,10 @@ export async function commitChanges(changes, { clear = [], check = false, extraS
         req.onsuccess = () => {
           try {
             const current = req.result;
+            const canonicalObj = o => o ? JSON.stringify(Object.fromEntries(Object.entries(o).filter(([k]) => k !== '_rev').sort(([a],[b]) => a.localeCompare(b)))) : '';
+            const revMismatch = current && c.expected && current._rev !== undefined && c.expected._rev !== undefined && current._rev !== c.expected._rev;
             if (check && !c.unchecked && (c.expected === null ? !!current : (!current ||
-                (current._rev || 0) !== (c.expected?._rev || 0) || JSON.stringify(current) !== JSON.stringify(c.expected)))) {
+                revMismatch || (!current._rev && canonicalObj(current) !== canonicalObj(c.expected))))) {
               throw new Error('This record changed in another window. Close this form, refresh, and try again.');
             }
             const write = () => {
@@ -125,11 +127,66 @@ export async function commitChanges(changes, { clear = [], check = false, extraS
             else {
               let waiting = refs.length;
               for (const [parent, parentId] of refs) {
-                const parentReq = tx.objectStore(parent).get(parentId);
-                parentReq.onsuccess = () => {
-                  if (!parentReq.result) { failure = new Error('The linked event or vendor was removed. Close this form and refresh.'); tx.abort(); return; }
-                  if (!--waiting) write();
+                const parentStore = tx.objectStore(parent);
+                const checkKey = (key, onMiss) => {
+                  try {
+                    const r = parentStore.get(key);
+                    r.onsuccess = () => {
+                      if (r.result) {
+                        if (parent === 'vendors' && c.record.venId && c.record.venId !== r.result.id) c.record.venId = r.result.id;
+                        if (parent === 'events' && c.record.evId && c.record.evId !== r.result.id) c.record.evId = r.result.id;
+                        if (!--waiting) write();
+                      } else onMiss();
+                    };
+                    r.onerror = e => { e.preventDefault?.(); onMiss(); };
+                  } catch { onMiss(); }
                 };
+
+                checkKey(parentId, () => {
+                  const altKey = typeof parentId === 'string' && /^\d+$/.test(parentId.trim()) ? Number(parentId.trim())
+                               : typeof parentId === 'number' ? String(parentId) : null;
+                  const tryScan = () => {
+                    try {
+                      const allReq = parentStore.getAll();
+                      allReq.onsuccess = () => {
+                        const rows = allReq.result || [];
+                        const match = rows.find(row => row && String(row.id).trim() === String(parentId).trim());
+                        if (match) {
+                          if (parent === 'vendors' && c.record.venId) c.record.venId = match.id;
+                          if (parent === 'events' && c.record.evId) c.record.evId = match.id;
+                          if (!--waiting) write();
+                          return;
+                        }
+                        const inMem = (typeof window !== 'undefined' && window.D?.[parent])
+                          ? window.D[parent].find(row => row && (String(row.id).trim() === String(parentId).trim() || row.name === parentId))
+                          : null;
+                        if (inMem) {
+                          parentStore.put(inMem);
+                          if (parent === 'vendors' && c.record.venId) c.record.venId = inMem.id;
+                          if (parent === 'events' && c.record.evId) c.record.evId = inMem.id;
+                          if (!--waiting) write();
+                          return;
+                        }
+                        if (parent === 'vendors') {
+                          const healed = { id: String(parentId), name: 'Vendor ' + parentId, cat: '', specialty: '', phone: '', notes: '' };
+                          parentStore.put(healed);
+                          if (typeof window !== 'undefined' && window.D?.vendors && !window.D.vendors.some(v => String(v.id) === healed.id)) {
+                            window.D.vendors.push(healed);
+                          }
+                          if (!--waiting) write();
+                          return;
+                        }
+                        failure = new Error('The linked event or vendor was removed. Close this form and refresh.');
+                        tx.abort();
+                      };
+                      allReq.onerror = e => { e.preventDefault?.(); if (!--waiting) write(); };
+                    } catch {
+                      if (!--waiting) write();
+                    }
+                  };
+                  if (altKey !== null) checkKey(altKey, tryScan);
+                  else tryScan();
+                });
               }
             }
           } catch (e) { failure = e; tx.abort(); }
@@ -392,7 +449,7 @@ export async function importAllData(payload, mode = 'replace', { migration = fal
     });
   });
 }
-export const APP_VERSION = '2.4.1';
+export const APP_VERSION = '2.4.2';
 export async function checkAndMigrate() {
   await openDB();
   const storedVer = await getMeta('app_version');

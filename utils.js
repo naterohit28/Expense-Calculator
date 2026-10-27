@@ -198,12 +198,13 @@ export function unpaidCredit(expenses, vPays) {
   const byVendor = new Map();
   for (const x of expenses) {
     if (!isOnCredit(x) || !x.venId) continue;
-    if (!byVendor.has(x.venId)) byVendor.set(x.venId, []);
-    byVendor.get(x.venId).push(x);
+    const vId = String(x.venId).trim();
+    if (!byVendor.has(vId)) byVendor.set(vId, []);
+    byVendor.get(vId).push(x);
   }
   const out = [];
   for (const [venId, xs] of byVendor) {
-    let pool = vPays.filter(p => p.venId === venId).reduce((s, p) => s + (Number(p.amt) || 0), 0);
+    let pool = vPays.filter(p => String(p.venId ?? '').trim() === venId).reduce((s, p) => s + (Number(p.amt) || 0), 0);
     xs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     for (const x of xs) {
       const covered = Math.min(pool, x.amt || 0);
@@ -234,8 +235,9 @@ export function isOnCredit(x) {
 }
 
 export function calcVendorBalance(vendorId, expenses, vPays) {
-  const mine     = expenses.filter(x => x.venId === vendorId);
-  const pays     = vPays.filter(p => p.venId === vendorId);
+  const vIdStr   = String(vendorId ?? '').trim();
+  const mine     = expenses.filter(x => String(x.venId ?? '').trim() === vIdStr);
+  const pays     = vPays.filter(p => String(p.venId ?? '').trim() === vIdStr);
   const supplied = mine.reduce((s, x) => s + (Number(x.amt) || 0), 0);
   const credit   = mine.filter(isOnCredit).reduce((s, x) => s + (Number(x.amt) || 0), 0);
   const paidNow  = supplied - credit;
