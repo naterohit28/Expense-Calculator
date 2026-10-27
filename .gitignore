@@ -4,3 +4,26 @@ FFmobile.html
 
 node_modules/
 test-artifacts/
+
+# Private signing material, credentials and local business records
+*.keystore
+*.jks
+*.p12
+*.pfx
+signing-secrets.xml
+.env
+.env.*
+!.env.example
+flavor-fusion-backup-*.json
+flavor-fusion-starting-data.json
+
+# Distributables belong in GitHub Releases, not the web source tree
+*.apk
+*.apk.idsig
+*.aab
+*.exe
+*.zip
+
+# The organized outer workspace must not be copied into the source repository
+Backups/
+Apps/
