@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- Non-blocking: the app paints with the system font and swaps to Inter when it arrives -->
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="all">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -31,7 +31,7 @@
 </div>
 
 <!-- ── PIN LOCK SCREEN ── -->
-<div id="pin-screen">
+<div id="pin-screen" role="dialog" aria-modal="true" aria-labelledby="pin-title">
   <img class="pin-logo" src="icons/icon-192.png" alt="">
   <div class="pin-title" id="pin-title">Enter PIN – पिन टाका</div>
   <div class="pin-sub"  id="pin-sub">Enter your 4-digit PIN</div>
@@ -102,13 +102,13 @@
     </div>
 
     <div class="d-group">
-      <span class="label">Backup – बॅकअप <span class="meta" id="backup-meta" data-nl></span></span>
+      <p class="meta">Records are saved on this device. Keep a backup outside your phone; clearing browser data can remove records.</p><span class="label">Backup – बॅकअप <span class="meta" id="backup-meta" data-nl></span></span>
       <button type="button" class="d-item" id="btn-export"><i data-ic="upload"></i>Share / save backup – बॅकअप पाठवा</button>
       <button type="button" class="d-item" id="btn-import"><i data-ic="download"></i>Import backup – आयात</button>
     </div>
 
     <div class="d-group">
-      <span class="label">Security – सुरक्षा</span>
+      <span class="label">Privacy lock – गोपनीयता पिन</span><p class="meta">PIN hides the screen; it does not encrypt records. Keep your phone locked and backups private.</p>
       <button type="button" class="d-item" id="btn-set-pin"><i data-ic="lock"></i>Set PIN – पिन सेट करा</button>
       <button type="button" class="d-item danger" id="btn-remove-pin"><i data-ic="unlock"></i>Remove PIN – पिन काढा</button>
     </div>
@@ -383,11 +383,7 @@
 </div>
 
 <!-- ── SERVICE WORKER ── -->
-<script>
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch((err) => console.log('SW registration error:', err));
-  }
-</script>
+<script src="register-sw.js" defer></script>
 
 <!-- ── MODULE ENTRY POINT ── -->
 <script type="module" src="app.js"></script>

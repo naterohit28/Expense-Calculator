@@ -97,7 +97,7 @@ export function validate(rules, data) {
 
     if (checks.numeric && val !== undefined && val !== '') {
       const num = Number(val);
-      if (isNaN(num) || num < 0) {
+      if (!Number.isFinite(num) || num < 0 || num > 1e12 || Math.abs(num * 100 - Math.round(num * 100)) > .001) {
         errors[field] = checks.numericMsg || `${field} must be a positive number`;
         continue;
       }
@@ -108,6 +108,9 @@ export function validate(rules, data) {
       if (checks.max !== undefined && num > checks.max) {
         errors[field] = checks.maxMsg || `${field} must be at most ${checks.max}`;
         continue;
+      }
+      if (checks.integer && !Number.isSafeInteger(num)) {
+        errors[field] = `${field} must be a whole number`;
       }
     }
 
@@ -120,7 +123,7 @@ export function validate(rules, data) {
 
     if (checks.date && val) {
       const d = new Date(val);
-      if (isNaN(d.getTime())) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(val) || isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== val) {
         errors[field] = 'Enter a valid date';
       }
     }
@@ -134,6 +137,8 @@ export const EVENT_RULES = {
   date:    { required: true, date: true, requiredMsg: 'Date – दिनांक आवश्यक आहे' },
   venue:   { required: true, requiredMsg: 'Venue – ठिकाण आवश्यक आहे' },
   billing: { required: true, numeric: true, min: 1, requiredMsg: 'Billing amount – बिल रक्कम आवश्यक आहे', minMsg: 'Billing must be > 0' },
+  budget:  { numeric: true, min: 0 },
+  guests:  { numeric: true, integer: true, min: 0 },
   mobile:  { phone: true }
 };
 
@@ -162,11 +167,11 @@ export const VPAY_RULES = {
 
 /* ── BUSINESS CALCULATIONS ───────────────────────── */
 export function calcEventReceived(eventId, cPays) {
-  return cPays.filter(p => p.evId === eventId).reduce((s, p) => s + (p.amt || 0), 0);
+  return cPays.filter(p => p.evId === eventId).reduce((s, p) => s + (Number(p.amt) || 0), 0);
 }
 
 export function calcEventExpenses(eventId, expenses) {
-  return expenses.filter(x => x.evId === eventId).reduce((s, x) => s + (x.amt || 0), 0);
+  return expenses.filter(x => x.evId === eventId).reduce((s, x) => s + (Number(x.amt) || 0), 0);
 }
 
 export function calcEventPL(ev, cPays, expenses) {
@@ -198,12 +203,12 @@ export function unpaidCredit(expenses, vPays) {
   }
   const out = [];
   for (const [venId, xs] of byVendor) {
-    let pool = vPays.filter(p => p.venId === venId).reduce((s, p) => s + (p.amt || 0), 0);
+    let pool = vPays.filter(p => p.venId === venId).reduce((s, p) => s + (Number(p.amt) || 0), 0);
     xs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     for (const x of xs) {
       const covered = Math.min(pool, x.amt || 0);
       pool -= covered;
-      const left = (x.amt || 0) - covered;
+      const left = (Number(x.amt) || 0) - covered;
       if (left > 0) out.push({ x, left });
     }
   }
@@ -231,10 +236,10 @@ export function isOnCredit(x) {
 export function calcVendorBalance(vendorId, expenses, vPays) {
   const mine     = expenses.filter(x => x.venId === vendorId);
   const pays     = vPays.filter(p => p.venId === vendorId);
-  const supplied = mine.reduce((s, x) => s + (x.amt || 0), 0);
-  const credit   = mine.filter(isOnCredit).reduce((s, x) => s + (x.amt || 0), 0);
+  const supplied = mine.reduce((s, x) => s + (Number(x.amt) || 0), 0);
+  const credit   = mine.filter(isOnCredit).reduce((s, x) => s + (Number(x.amt) || 0), 0);
   const paidNow  = supplied - credit;
-  const paid     = paidNow + pays.reduce((s, p) => s + (p.amt || 0), 0);
+  const paid     = paidNow + pays.reduce((s, p) => s + (Number(p.amt) || 0), 0);
   return {
     supplied, credit, paid,
     credited: supplied,              // kept for older callers
