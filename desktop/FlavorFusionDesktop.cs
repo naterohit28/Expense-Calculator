@@ -24,7 +24,24 @@ internal static class FlavorFusionDesktop {
         singleInstance = new Mutex(true, "Local\\FlavorFusionDesktopTest", out created);
         Application.EnableVisualStyles();
         edge = FindEdge();
-        if (!created) { Open(); return; }
+        if (!created) {
+            // Opening a newly downloaded EXE must not silently show an old server.
+            try {
+                var request = (HttpWebRequest)WebRequest.Create(Url + "health");
+                request.Timeout = 3000; request.Proxy = null;
+                using (var response = request.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream())) {
+                    if (!reader.ReadToEnd().Contains("\"version\":\"2.4.6\"")) {
+                        MessageBox.Show("An older desktop app is still running. Choose Exit test server from its system-tray icon, then run CaterDesk again. Your records stay in the same data profile.", "CaterDesk update required");
+                        return;
+                    }
+                }
+            } catch (Exception) {
+                MessageBox.Show("Another desktop app is starting or still running. Exit its system-tray test server, then run CaterDesk again.", "CaterDesk already running");
+                return;
+            }
+            Open(); return;
+        }
         if (edge == null) { MessageBox.Show("Microsoft Edge is required for this desktop test app.", "CaterDesk Desktop Test"); return; }
         if (!File.Exists(Path.Combine(Root, "index.html"))) { MessageBox.Show("Extract the entire ZIP first. Keep the app folder beside this executable.", "CaterDesk Desktop Test"); return; }
         try {
@@ -32,10 +49,10 @@ internal static class FlavorFusionDesktop {
             var thread = new Thread(Serve); thread.IsBackground = true; thread.Start();
         } catch (Exception e) { MessageBox.Show("Cannot open the local test server. Close another desktop test copy and retry.\n" + e.Message, "CaterDesk Desktop Test"); return; }
         tray = new NotifyIcon(); tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-        tray.Text = "CaterDesk Desktop Test v2.4.5";
+        tray.Text = "CaterDesk Desktop Test v2.4.6";
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open CaterDesk", null, delegate { Open(); });
-        menu.Items.Add("About test storage", null, delegate { MessageBox.Show("This desktop test app uses a separate Edge profile. Its records are local to this computer and do not sync with your phone. Use Share/save backup before moving records.\n\nData folder:\n" + Profile(), "CaterDesk Desktop Test v2.4.5"); });
+        menu.Items.Add("About test storage", null, delegate { MessageBox.Show("This desktop test app uses a separate Edge profile. Its records are local to this computer and do not sync with your phone. Use Share/save backup before moving records.\n\nData folder:\n" + Profile(), "CaterDesk Desktop Test v2.4.6"); });
         menu.Items.Add("Exit test server", null, delegate { Application.Exit(); });
         tray.ContextMenuStrip = menu; tray.DoubleClick += delegate { Open(); }; tray.Visible = true;
         Application.ApplicationExit += delegate { tray.Visible = false; tray.Dispose(); listener.Stop(); singleInstance.ReleaseMutex(); };
@@ -73,7 +90,7 @@ internal static class FlavorFusionDesktop {
                     bool head = parts[0] == "HEAD";
                     if (parts[0] != "GET" && !head) { Reply(stream, 405, "text/plain", Encoding.UTF8.GetBytes("GET and HEAD only"), false); return; }
                     var raw = parts[1].Split('?')[0]; var path = Uri.UnescapeDataString(raw);
-                    if (path == "/health") { Reply(stream, 200, "application/json", Encoding.UTF8.GetBytes("{\"app\":\"FlavorFusionDesktopTest\",\"version\":\"2.4.5\"}"), head); return; }
+                    if (path == "/health") { Reply(stream, 200, "application/json", Encoding.UTF8.GetBytes("{\"app\":\"FlavorFusionDesktopTest\",\"version\":\"2.4.6\"}"), head); return; }
                     foreach (var segment in path.Split('/')) if (segment.StartsWith(".")) { Reply(stream, 403, "text/plain", new byte[0], head); return; }
                     if (path == "/") path = "/index.html";
                     var file = Path.GetFullPath(Path.Combine(Root, path.TrimStart('/').Replace('/', Path.DirectorySeparatorChar)));

@@ -23,7 +23,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '2.4.5';
+const APP_BUILD = '2.4.6';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -146,6 +146,26 @@ changesChannel?.addEventListener('message', async () => {
 /* ── BOOT ────────────────────────────────────────── */
 async function boot() {
   q('app-build').textContent = 'v' + APP_BUILD;
+  let readyRelease = null;
+  q('check-app-update').addEventListener('click', async () => {
+    const button = q('check-app-update'), status = q('app-update-status');
+    if (readyRelease) {
+      if (activeSaves.size || document.querySelector('.modal-ov.active, #lightbox.active') || q('pin-screen').classList.contains('active')) {
+        status.textContent = 'Save or close your entry and unlock the app before reloading.';
+        return;
+      }
+      location.reload(); return;
+    }
+    button.disabled = true; status.textContent = 'Checking for updates…';
+    try {
+      const release = await window.caterDeskUpdate();
+      if (release !== APP_BUILD) {
+        readyRelease = release; button.textContent = 'Reload saved app';
+        status.textContent = `v${release} is ready. Save or close any entry, then reload.`;
+      } else status.textContent = `You are using CaterDesk v${APP_BUILD}.`;
+    } catch (error) { status.textContent = error.message || 'Cannot check updates. Try again online.'; }
+    finally { button.disabled = false; }
+  });
   hydrateIcons();
   initTheme();
   initLang();
