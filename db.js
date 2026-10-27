@@ -10,77 +10,76 @@ const DB_VERSION = 4;   // v3: photos indexed by eventId · v4: bill photos inde
 const STORES     = ['events','expenses','vendors','cPays','vPays','photos','meta'];
 
 let _db = null;
-let _opening = null;   // one open request at a time, however many callers
+let _opening = null;
+let _openGeneration = 0;
+const STORAGE_TIMEOUT_MS = 8000;
 
 export function resetDB() {
-  if (_db) {
-    try { _db.close(); } catch {}
-    _db = null;
-  }
-  _opening = null;
+  const old = _db;
+  _db = null; _opening = null; _openGeneration++;
+  try { old?.close(); } catch {}
 }
 
-/* ── OPEN / INIT ─────────────────────────────────── */
 export function openDB(force = false) {
   if (force) resetDB();
   if (_db) {
-    try {
-      // Test if connection is still healthy; if closed/closing this throws InvalidStateError
-      _db.transaction('meta', 'readonly');
-      return Promise.resolve(_db);
-    } catch {
-      resetDB();
-    }
+    try { _db.transaction('meta', 'readonly'); return Promise.resolve(_db); }
+    catch { resetDB(); }
   }
   if (_opening) return _opening;
+  const generation = ++_openGeneration;
   _opening = new Promise((resolve, reject) => {
-    let finished = false;
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-
-    // An older copy of the app is still open elsewhere (another tab, the installed app
-    // window) and holds the old version. Tell the user instead of spinning forever;
-    // the upgrade continues by itself once that copy closes.
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (generation === _openGeneration) { _opening = null; _openGeneration++; }
+      reject(new Error('Storage did not open. Your entries were kept. Close other app windows and retry.'));
+    }, STORAGE_TIMEOUT_MS);
     req.onblocked = () => window.dispatchEvent(new CustomEvent('ffdb-blocked'));
-
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      STORES.forEach(name => {
-        if (!db.objectStoreNames.contains(name)) {
-          db.createObjectStore(name, { keyPath: 'id' });
-        }
-      });
-      // Opening an event used to read every photo in the app; the index reads only its own
+      STORES.forEach(name => { if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' }); });
       const photos = e.target.transaction.objectStore('photos');
       if (!photos.indexNames.contains('eventId')) photos.createIndex('eventId', 'eventId');
-      // Bill/invoice photos live in the same store, keyed to their expense
       if (!photos.indexNames.contains('expenseId')) photos.createIndex('expenseId', 'expenseId');
     };
-
-    req.onsuccess = e => {
-      finished = true;
-      _db = e.target.result;
-      _opening = null;
-      // Invalidate connection if closed by OS or sleep
-      _db.onclose = () => { resetDB(); };
-      // A newer version wants to upgrade: step aside and reload into it, so updates
-      // never get stuck behind this copy
-      _db.onversionchange = () => { resetDB(); location.reload(); };
-      resolve(_db);
+    req.onsuccess = () => {
+      const connection = req.result;
+      if (settled || generation !== _openGeneration) { connection.close(); return; }
+      settled = true; clearTimeout(timer);
+      _db = connection; _opening = null;
+      connection.onclose = () => { if (_db === connection) resetDB(); };
+      connection.onversionchange = () => {
+        if (_db === connection) resetDB(); else connection.close();
+        window.dispatchEvent(new CustomEvent('ffdb-update-needed'));
+      };
+      resolve(connection);
     };
-    req.onerror = e => {
-      finished = true;
-      resetDB();
-      reject(e.target.error || new Error('Failed to open database'));
+    req.onerror = () => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      if (generation === _openGeneration) _opening = null;
+      reject(req.error || new Error('Failed to open storage'));
     };
-
-    setTimeout(() => {
-      if (!finished && _opening) {
-        resetDB();
-        reject(new Error('Storage open timed out.'));
-      }
-    }, 8000);
   });
   return _opening;
+}
+
+// Bound the transaction itself, not just the UI promise. A timed-out write must
+// actually abort before Save can be retried, so it cannot commit unexpectedly later.
+function transaction(db, names, mode) {
+  const tx = db.transaction(names, mode);
+  const timer = setTimeout(() => {
+    const error = new Error('Storage was busy. The operation was cancelled; your entry is still here. Retry after closing other app windows.');
+    error.name = 'TimeoutError';
+    try { tx.abort(); tx.ffError = error; } catch { /* Already completed. */ }
+  }, STORAGE_TIMEOUT_MS);
+  const cleanup = () => clearTimeout(timer);
+  tx.addEventListener('complete', cleanup, { once: true });
+  tx.addEventListener('abort', cleanup, { once: true });
+  return tx;
 }
 
 // Resilient transaction executor: catches InvalidStateError / connection dropped and retries once
@@ -89,7 +88,9 @@ async function withTx(run) {
     const db = await openDB();
     return await run(db);
   } catch (err) {
-    const isConnLoss = err && (err.name === 'InvalidStateError' || /connection is closed|closing|closed/i.test(err.message || ''));
+    // Only retry a definite closed-connection error, not messages such as
+    // "close other app windows" from a cancelled transaction.
+    const isConnLoss = err?.name === 'InvalidStateError';
     if (isConnLoss) {
       console.warn('IDB connection closed or invalid. Reopening and retrying...', err);
       const freshDb = await openDB(true);
@@ -102,19 +103,21 @@ async function withTx(run) {
 /* ── GENERIC CRUD ────────────────────────────────── */
 export async function getAll(store) {
   return withTx(db => new Promise((resolve, reject) => {
-    const tx  = db.transaction(store, 'readonly');
+    const tx  = transaction(db, store, 'readonly');
     const req = tx.objectStore(store).getAll();
     req.onsuccess = () => resolve(req.result || []);
-    req.onerror   = () => reject(req.error);
+    req.onerror   = () => reject(tx.ffError || req.error);
+    tx.onabort = () => reject(tx.ffError || tx.error || new Error('Storage read aborted'));
   }));
 }
 
 export async function getOne(store, id) {
   return withTx(db => new Promise((resolve, reject) => {
-    const tx  = db.transaction(store, 'readonly');
+    const tx  = transaction(db, store, 'readonly');
     const req = tx.objectStore(store).get(id);
     req.onsuccess = () => resolve(req.result || null);
-    req.onerror   = () => reject(req.error);
+    req.onerror   = () => reject(tx.ffError || req.error);
+    tx.onabort = () => reject(tx.ffError || tx.error || new Error('Storage read aborted'));
   }));
 }
 
@@ -124,13 +127,13 @@ export async function commitChanges(changes, { clear = [], check = false, extraS
   const names = [...new Set([...clear, ...extraStores, ...(guardedDelete ? STORES : []), ...changes.map(c => c.store)])];
   if (!names.length) return;
   return withTx(db => new Promise((resolve, reject) => {
-    const tx = db.transaction(names, 'readwrite');
+    const tx = transaction(db, names, 'readwrite');
     let failure;
     tx.oncomplete = () => {
       changes.forEach(c => { if (c.record && c.nextRev) c.record._rev = c.nextRev; });
       resolve();
     };
-    tx.onerror = tx.onabort = () => reject(failure || tx.error || new Error('Storage transaction aborted. Nothing was saved.'));
+    tx.onerror = tx.onabort = () => reject(failure || tx.ffError || tx.error || new Error('Storage transaction aborted. Nothing was saved.'));
     try {
       clear.forEach(name => tx.objectStore(name).clear());
       for (const c of changes) {
@@ -143,7 +146,7 @@ export async function commitChanges(changes, { clear = [], check = false, extraS
             const canonicalObj = o => o ? JSON.stringify(Object.fromEntries(Object.entries(o).filter(([k]) => k !== '_rev').sort(([a],[b]) => a.localeCompare(b)))) : '';
             const revMismatch = current && c.expected && current._rev !== undefined && c.expected._rev !== undefined && current._rev !== c.expected._rev;
             if (check && !c.unchecked && (c.expected === null ? !!current : (!current ||
-                revMismatch || (!current._rev && canonicalObj(current) !== canonicalObj(c.expected))))) {
+                revMismatch || canonicalObj(current) !== canonicalObj(c.expected)))) {
               throw new Error('This record changed in another window. Close this form, refresh, and try again.');
             }
             const write = () => {
@@ -203,32 +206,11 @@ export async function commitChanges(changes, { clear = [], check = false, extraS
                           if (!--waiting) write();
                           return;
                         }
-                        const inMem = (typeof window !== 'undefined' && window.D?.[parent])
-                          ? window.D[parent].find(row => row && (String(row.id).trim() === String(parentId).trim() || row.name === parentId))
-                          : null;
-                        if (inMem) {
-                          parentStore.put(inMem);
-                          if (parent === 'vendors' && c.record.venId) c.record.venId = inMem.id;
-                          if (parent === 'events' && c.record.evId) c.record.evId = inMem.id;
-                          if (!--waiting) write();
-                          return;
-                        }
-                        if (parent === 'vendors') {
-                          const healed = { id: String(parentId), name: 'Vendor ' + parentId, cat: '', specialty: '', phone: '', notes: '' };
-                          parentStore.put(healed);
-                          if (typeof window !== 'undefined' && window.D?.vendors && !window.D.vendors.some(v => String(v.id) === healed.id)) {
-                            window.D.vendors.push(healed);
-                          }
-                          if (!--waiting) write();
-                          return;
-                        }
                         failure = new Error('The linked event or vendor was removed. Close this form and refresh.');
                         tx.abort();
                       };
-                      allReq.onerror = e => { e.preventDefault?.(); if (!--waiting) write(); };
-                    } catch {
-                      if (!--waiting) write();
-                    }
+                      allReq.onerror = () => { failure = new Error('Could not verify the linked record. Nothing was saved.'); tx.abort(); };
+                    } catch (e) { failure = e; tx.abort(); }
                   };
                   if (altKey !== null) checkKey(altKey, tryScan);
                   else tryScan();
@@ -270,9 +252,11 @@ export async function savePhoto(eventId, dataUrl) {
 
 export async function getPhotosForEvent(eventId) {
   return withTx(db => new Promise((resolve, reject) => {
-    const req = db.transaction('photos', 'readonly').objectStore('photos').index('eventId').getAll(eventId);
+    const tx = transaction(db, 'photos', 'readonly');
+    const req = tx.objectStore('photos').index('eventId').getAll(eventId);
     req.onsuccess = () => resolve((req.result || []).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')));
-    req.onerror   = () => reject(req.error);
+    req.onerror   = () => reject(tx.ffError || req.error);
+    tx.onabort = () => reject(tx.ffError || tx.error || new Error('Storage read aborted'));
   }));
 }
 
@@ -294,10 +278,10 @@ export async function saveEventPhotos(event, dataUrls) {
 // saved, preserve the attachment as a draft instead of leaving an invisible orphan.
 export async function recoverUnlinkedBills() {
   return withTx(db => new Promise((resolve, reject) => {
-    const tx = db.transaction(['photos', 'expenses'], 'readwrite');
+    const tx = transaction(db, ['photos', 'expenses'], 'readwrite');
     const index = tx.objectStore('photos').index('expenseId');
     tx.oncomplete = resolve;
-    tx.onerror = tx.onabort = () => reject(tx.error || new Error('Bill recovery aborted'));
+    tx.onerror = tx.onabort = () => reject(tx.ffError || tx.error || new Error('Bill recovery aborted'));
     const req = index.openKeyCursor();
     const groups = new Map();
     req.onsuccess = () => {
@@ -339,9 +323,11 @@ export async function saveBill(expenseId, file) {
 
 export async function getBillsForExpense(expenseId) {
   return withTx(db => new Promise((resolve, reject) => {
-    const req = db.transaction('photos', 'readonly').objectStore('photos').index('expenseId').getAll(expenseId);
+    const tx = transaction(db, 'photos', 'readonly');
+    const req = tx.objectStore('photos').index('expenseId').getAll(expenseId);
     req.onsuccess = () => resolve((req.result || []).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')));
-    req.onerror   = () => reject(req.error);
+    req.onerror   = () => reject(tx.ffError || req.error);
+    tx.onabort = () => reject(tx.ffError || tx.error || new Error('Storage read aborted'));
   }));
 }
 
@@ -393,15 +379,14 @@ export async function migrateFromLocalStorage() {
 
 /* ── FULL EXPORT (all stores) ────────────────────── */
 export async function exportAllData() {
-  const db = await openDB();
   const names = STORES.filter(s => s !== 'meta');
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(names, 'readonly');
+  return withTx(db => new Promise((resolve, reject) => {
+    const tx = transaction(db, names, 'readonly');
     const result = { version: 'ffv2', exportedAt: new Date().toISOString(), appVersion: APP_VERSION };
     names.forEach(name => { const req = tx.objectStore(name).getAll(); req.onsuccess = () => { result[name] = req.result; }; });
     tx.oncomplete = () => resolve(result);
-    tx.onerror = tx.onabort = () => reject(tx.error || new Error('Backup read aborted'));
-  });
+    tx.onerror = tx.onabort = () => reject(tx.ffError || tx.error || new Error('Backup read aborted'));
+  }));
 }
 
 const DATA_STORES = ['events', 'expenses', 'vendors', 'cPays', 'vPays', 'photos'];
@@ -456,13 +441,12 @@ export async function prepareImport(payload) {
 export async function importAllData(payload, mode = 'replace', { migration = false } = {}) {
   if (!['replace', 'merge'].includes(mode)) throw new Error('Invalid import mode');
   const data = await prepareImport(payload);
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction([...DATA_STORES, 'meta'], 'readwrite');
+  return withTx(db => new Promise((resolve, reject) => {
+    const tx = transaction(db, [...DATA_STORES, 'meta'], 'readwrite');
     let failure;
     const current = {}; let pending = DATA_STORES.length;
     tx.oncomplete = () => resolve();
-    tx.onerror = tx.onabort = () => reject(failure || tx.error || new Error('Import aborted; previous data retained'));
+    tx.onerror = tx.onabort = () => reject(failure || tx.ffError || tx.error || new Error('Import aborted; previous data retained'));
     DATA_STORES.forEach(name => {
       const req = tx.objectStore(name).getAll();
       req.onsuccess = () => {
@@ -499,9 +483,9 @@ export async function importAllData(payload, mode = 'replace', { migration = fal
         } catch (e) { failure = e; tx.abort(); }
       };
     });
-  });
+  }));
 }
-export const APP_VERSION = '2.4.3';
+export const APP_VERSION = '2.4.4';
 export async function checkAndMigrate() {
   await openDB();
   const storedVer = await getMeta('app_version');

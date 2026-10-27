@@ -1,4 +1,38 @@
-# Reliability release 2.4.1
+# Reliability release 2.4.4
+
+## Idle and background recovery (2.4.4)
+
+Reviewed on top of the Antigravity 2.4.2 and 2.4.3 changes. A blocked-database
+reproduction against 2.4.3 showed Save reporting a timeout and enabling a retry,
+then the original write committing after that failure. A foreground event could
+also clear the guard while a save was in progress.
+
+- Transactions now own their eight-second timeout and actually abort before
+  the UI permits retry. There is no detached UI timeout or wake-time guard reset.
+- Reads, attachments, exports and imports share bounded connection recovery.
+  Late database-open completions cannot replace a newer connection.
+- Attachment reads must finish successfully before an edited expense saves;
+  no 2.5-second shortcut can discard bill IDs.
+- Overlay/history cleanup has a fallback when Android does not deliver popstate.
+  Foreground focus reconciles inert state without discarding an open form.
+- Installed release assets are served consistently. A new worker waits for old
+  clients to close instead of taking over a form during use. Close the APK and
+  any same-site browser tabs, then reopen to load the new worker. Do not clear data.
+- Preserve numeric/string vendor-key lookup from 2.4.2, but do not invent missing
+  vendor records or write through a failed reference check.
+
+Validation: 21 core checks, six attachment checks, seven idle-recovery checks and
+the CSP smoke test pass. Idle tests include a queued transaction, wake during a
+save, a missing popstate, delayed attachments, closed export/import connections,
+a simulated 30-minute background/PIN interval, and 30 consecutive save/tab cycles.
+A separate real 181-second idle test through the compiled desktop launcher saved
+and reloaded both a new desktop entry and a pre-filled mobile-sized form without
+page errors. This is not a physical Android sleep/OS-kill certification.
+
+For desktop testing, see `desktop/README.txt`. Build a portable Windows launcher
+with `desktop/build.ps1 -OutputDirectory <new-output-folder>`. It uses Microsoft
+Edge, a dedicated profile and a fixed loopback origin. Desktop records do not
+automatically sync with the phone.
 
 This release keeps the existing IndexedDB name and schema version, and does not
 clear existing business records when the app updates.
