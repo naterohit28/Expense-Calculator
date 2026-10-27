@@ -1,20 +1,13 @@
-/**
- * Flavor Fusion v2 Service Worker
- * Offline support for the PWA.
- *
- * The app's own files are fetched network-first: the page and its scripts must come
- * from the same release, or a new page can run with old scripts (new buttons that do
- * nothing). The cache is the offline fallback. Third-party assets (fonts) are
- * cache-first since they never change.
- */
+/** Offline release cache: install the complete app, then serve that release consistently. */
 
-const CACHE_NAME = 'flavor-fusion-v2-cache-v9';
+const CACHE_NAME = 'flavor-fusion-v2-cache-v10';
 // The Classic FFexp / FFmobile pages are retired: no longer linked or cached offline
 const PRECACHE = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './register-sw.js',
   './db.js',
   './utils.js',
   './icons.js',
@@ -40,7 +33,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k.startsWith('flavor-fusion-') && k !== CACHE_NAME).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
@@ -66,24 +59,15 @@ self.addEventListener('fetch', (e) => {
   );
 });
 
+// The install step commits a complete release to this cache. Controlled pages use
+// that release consistently; worker update checks bring in the next complete set.
 async function networkFirst(request) {
   const cache = await caches.open(CACHE_NAME);
-  const fromCache = async () =>
-    (await cache.match(request, { ignoreSearch: true })) ||
-    (request.mode === 'navigate' ? await cache.match('./index.html') : undefined);
-
-  // 'no-cache' revalidates with the server (cheap 304 when unchanged)
-  const fresh = (request.mode === 'navigate' ? fetch(request) : fetch(request, { cache: 'no-cache' }))
-    .then((res) => { if (res && res.ok) cache.put(request, res.clone()); return res; });
-  const slow = new Promise((resolve) => setTimeout(resolve, NETWORK_TIMEOUT_MS, 'slow'));
-
-  try {
-    const first = await Promise.race([fresh, slow]);
-    if (first !== 'slow') return first;
-    // Network is slow: use the saved copy if there is one, otherwise keep waiting
-    return (await fromCache()) || (await fresh);
-  } catch {
-    // Offline
-    return (await fromCache()) || Response.error();
+  const cached = await cache.match(request, { ignoreSearch: true });
+  if (cached) return cached;
+  if (request.mode === 'navigate') {
+    const page = await cache.match('./index.html');
+    if (page) return page;
   }
+  try { return await fetch(request); } catch { return Response.error(); }
 }

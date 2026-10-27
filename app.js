@@ -5,8 +5,8 @@
  */
 
 import {
-  getAll, putOne, deleteOne, getMeta, setMeta,
-  savePhoto, getPhotosForEvent, deletePhoto, saveBill, getBillsForExpense,
+  getAll, putOne, putChecked, commitChanges, deleteOne, getMeta, setMeta,
+  savePhoto, saveEventPhotos, getPhotosForEvent, deletePhoto, saveBill, getBillsForExpense,
   exportAllData, importAllData, checkAndMigrate
 } from './db.js';
 
@@ -23,7 +23,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '2.4.0';
+const APP_BUILD = '2.4.1';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -36,6 +36,13 @@ let pendingPhotoEvId = null;
 let lightboxState    = { evId: null, photoIds: [], idx: 0 };
 let pinBuffer        = '';
 let pinFails = 0, pinLockedUntil = 0;
+let pinBusy = false, hasPin = false, hiddenAt = 0;
+let expensePage = 1; const PAGE_SIZE = 100;
+const activeSaves = new Set();
+const changesChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('ff-data') : null;
+let reloadPending = false;
+let overlayTrigger = null;
+document.addEventListener('click', e => { overlayTrigger = e.target.closest('button, [role="button"], a[href]'); }, true);
 let lastExport = null;      // ISO time of the last backup export
 let pickVendorForExpense = null;  // set while "+ New vendor" is opened from the expense sheet
 let billTarget = 'sheet';         // where the next bill photo goes: the open expense sheet, or a new draft ('snap')
@@ -53,7 +60,7 @@ let period = 'all';
 /* ── SMALL HELPERS ───────────────────────────────── */
 function q(id)  { return document.getElementById(id); }
 function qv(id) { return q(id).value.trim(); }
-function qf(id) { return parseFloat(q(id).value); }
+function qf(id) { return Number(q(id).value) || (q(id).value.trim() ? NaN : 0); }
 
 // A phrase in both languages, shown per the language setting (see i18n.js)
 function tr(en, mr) { return `<span class="t-en">${en}</span><span class="t-mr">${mr}</span>`; }
@@ -97,6 +104,28 @@ function phoneDigits(p) {
   return d.length === 10 ? '91' + d : d;
 }
 
+
+async function runSave(key, task) {
+  if (activeSaves.has(key)) return;
+  activeSaves.add(key);
+  const buttons = [...document.querySelectorAll('[id^="btn-save-"]')];
+  buttons.forEach(b => b.disabled = true);
+  try { await task(); changesChannel?.postMessage('changed'); }
+  catch (e) { console.error(e); showToast(e.message?.includes('changed in another') ? e.message : 'Could not save. Your entry is still here. Check free storage and try again. – जतन झाले नाही', 'error'); }
+  finally { activeSaves.delete(key); if (!activeSaves.size) buttons.forEach(b => b.disabled = false); }
+}
+window.addEventListener('ff-migration-error', e => showToast('Legacy data could not be migrated. Originals were kept. ' + e.detail, 'error'));
+window.addEventListener('unhandledrejection', e => {
+  e.preventDefault(); console.error(e.reason); showLoading(false);
+  showToast(e.reason?.message || 'Operation failed. Your data has not been confirmed saved.', 'error');
+});
+changesChannel?.addEventListener('message', async () => {
+  if (!launched || overlays.length || activeSaves.size || q('pin-screen').classList.contains('active')) {
+    reloadPending = true; return;
+  }
+  await loadAll(); refreshCurrent();
+});
+
 /* ── BOOT ────────────────────────────────────────── */
 async function boot() {
   q('app-build').textContent = 'v' + APP_BUILD;
@@ -124,8 +153,11 @@ async function boot() {
     lastExport = await getMeta('last_export');
 
     const pin = await getMeta('pin_hash');
+    hasPin = !!pin;
+    pinLockedUntil = Number(await getMeta('pin_locked_until')) || 0;
     if (pin) {
       showPinScreen('unlock');
+      syncOverlayAccessibility();
     } else {
       launchApp();
     }
@@ -169,6 +201,7 @@ function launchApp() {
   bindAllEvents();
   history.replaceState({ tab: 'home', ref: null, depth: 0 }, '');
   go('home', { fromHistory: true });
+  syncOverlayAccessibility();
 }
 
 /* ── LOADING ─────────────────────────────────────── */
@@ -187,7 +220,7 @@ function showToast(msg, type = 'success', action = null) {
   btn.textContent = action ? action.label : '';
   btn.onclick = action ? () => { hideToast(); action.run(); } : null;
   clearTimeout(t._t);
-  t._t = setTimeout(hideToast, action ? 6000 : 2500);
+  t._t = action ? null : setTimeout(hideToast, type === 'error' ? 10000 : 4000);
 }
 
 function hideToast() {
@@ -254,16 +287,19 @@ function pinKey(val) {
     renderPinDots();
     return;
   }
-  if (val === 'ok' || pinBuffer.length >= 4) return;
+  if (pinBusy || val === 'ok' || pinBuffer.length >= 4) return;
   pinBuffer += val;
   renderPinDots();
 
   if (pinBuffer.length === 4) {
-    setTimeout(() => handlePinComplete(), 200);
+    setTimeout(() => handlePinComplete().catch(e => showToast(e.message, 'error')), 200);
   }
 }
 
 async function handlePinComplete() {
+  if (pinBusy) return;
+  pinBusy = true;
+  try {
   const screen = q('pin-screen');
   const mode   = screen.dataset.mode;
   const errEl  = q('pin-error');
@@ -272,8 +308,10 @@ async function handlePinComplete() {
     const stored = await getMeta('pin_hash');
     if (await verifyPin(pinBuffer, stored)) {
       pinFails = 0;
+      await setMeta('pin_locked_until', 0);
       // PINs set before v2.1 used a weak hash — upgrade it now that we know the PIN
       if (isLegacyPinHash(stored)) await setMeta('pin_hash', await hashPin(pinBuffer));
+      hasPin = true;
       screen.classList.remove('active');
       launchApp();
     } else {
@@ -282,6 +320,7 @@ async function handlePinComplete() {
       if (pinFails >= 5) {
         pinFails = 0;
         pinLockedUntil = Date.now() + 30000;
+        await setMeta('pin_locked_until', pinLockedUntil);
         errEl.textContent = 'Too many tries — wait 30 seconds – ३० सेकंद थांबा';
         setTimeout(() => { errEl.textContent = ''; }, 30000);
       } else {
@@ -299,6 +338,7 @@ async function handlePinComplete() {
   } else if (mode === 'confirm') {
     if (pinBuffer === screen.dataset.firstPin) {
       await setMeta('pin_hash', await hashPin(pinBuffer));
+      hasPin = true;
       screen.classList.remove('active');
       showToast('PIN set – पिन सेट झाला');
       launchApp();
@@ -308,6 +348,7 @@ async function handlePinComplete() {
       setTimeout(() => { pinBuffer = ''; showPinScreen('set'); }, 800);
     }
   }
+  } finally { pinBusy = false; syncOverlayAccessibility(); }
 }
 
 async function removePin() {
@@ -319,6 +360,7 @@ async function removePin() {
   });
   if (!ok) return;
   await setMeta('pin_hash', null);
+  hasPin = false;
   showToast('PIN removed – पिन काढला');
 }
 
@@ -329,8 +371,41 @@ async function removePin() {
 const overlays   = [];  // stack of { hide, after }
 const popWaiters = [];  // resolvers for history.back() calls we started
 
+window.addEventListener('popstate', onPopState);
+function getActiveOverlay() {
+  if (q('ask-modal').classList.contains('active')) return q('ask-modal');
+  if (q('pin-screen').classList.contains('active')) return q('pin-screen');
+  return [...document.querySelectorAll('#drawer.active, .modal-ov.active, #lightbox.active')].at(-1) || null;
+}
+function syncOverlayAccessibility() {
+  const top = getActiveOverlay();
+  for (const root of [q('hdr'), document.querySelector('main'), document.querySelector('nav'), q('fab')]) if (root) root.inert = !!top;
+  for (const root of document.querySelectorAll('#drawer, .modal-ov, #lightbox, #pin-screen')) root.inert = !!top && root !== top;
+  if (top && !top.contains(document.activeElement)) (top.querySelector('input:not([type=hidden]), button:not([disabled]), [tabindex="0"]'))?.focus({ preventScroll: true });
+}
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Tab') return;
+  const modal = getActiveOverlay();
+  if (!modal) return;
+  const focusable = [...modal.querySelectorAll('button:not([disabled]), input:not([type=hidden]), select, textarea, a[href], [tabindex="0"]')].filter(el => el.getClientRects().length && !el.closest('[inert]'));
+  const first = focusable[0], last = focusable.at(-1);
+  if (e.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) { e.preventDefault(); last?.focus(); }
+  else if (!e.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) { e.preventDefault(); first?.focus(); }
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (hasPin && hiddenAt && Date.now() - hiddenAt > 60000 && !activeSaves.size) {
+    showPinScreen('unlock'); syncOverlayAccessibility();
+  }
+});
 function openOverlay(hide, after) {
-  overlays.push({ hide, after });
+  const previous = overlayTrigger || document.activeElement;
+  overlays.push({ hide: () => {
+    hide(); syncOverlayAccessibility();
+    const target = previous?.isConnected && previous.getClientRects().length && !previous.closest('[inert]') ? previous : q('fab');
+    if (target?.getClientRects().length && !target.closest('[inert]')) target.focus({ preventScroll: true });
+  }, after });
+  queueMicrotask(syncOverlayAccessibility);
   const st = history.state || { tab: CT, ref: curRef, depth: 0 };
   history.pushState({ ...st, overlay: true, depth: (st.depth || 0) + 1 }, '');
 }
@@ -340,6 +415,7 @@ function closeOverlay() {
   const o = overlays.pop();
   if (!o) return Promise.resolve();
   o.hide();
+  if (reloadPending && !overlays.length) { reloadPending = false; loadAll().then(refreshCurrent); }
   if (!history.state?.overlay) { o.after?.(); return Promise.resolve(); }
   return new Promise(res => {
     popWaiters.push(() => { o.after?.(); res(); });
@@ -874,7 +950,8 @@ function rExp() {
 
   // Group by month, newest first
   const groups = new Map();
-  list.forEach(x => {
+  expensePage = Math.max(1, Math.min(expensePage, Math.ceil(list.length / PAGE_SIZE)));
+  list.slice((expensePage - 1) * PAGE_SIZE, expensePage * PAGE_SIZE).forEach(x => {
     const k = (x.date || '').slice(0, 7);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(x);
@@ -887,7 +964,7 @@ function rExp() {
       : 'No date – दिनांक नाही';
     return `<div class="sec"><span class="sec-title">${month}</span><span class="meta">${fmtCurrency(xs.reduce((s, x) => s + x.amt, 0))}</span></div>
     <div class="card list">${xs.map(x => expenseRow(x)).join('')}</div>`;
-  }).join('');
+  }).join('') + (list.length > PAGE_SIZE ? `<div class="btn-row" style="margin:16px 0"><button type="button" class="btn btn-secondary" data-action="expense-prev" ${expensePage === 1 ? 'disabled' : ''}>Previous – मागील</button><span role="status">${expensePage} / ${Math.ceil(list.length / PAGE_SIZE)}</span><button type="button" class="btn btn-secondary" data-action="expense-next" ${expensePage * PAGE_SIZE >= list.length ? 'disabled' : ''}>Next – पुढील</button></div>` : '');
 }
 
 /* ── VENDORS ─────────────────────────────────────── */
@@ -1174,7 +1251,9 @@ async function saveEvent() {
     date:    qv('ev-date'),
     venue:   qv('ev-venue'),
     billing: qf('ev-billing'),
-    mobile:  qv('ev-mobile')
+    mobile:  qv('ev-mobile'),
+    budget: qf('ev-budget'),
+    guests: qf('ev-guests')
   };
   const { valid, errors } = validate(EVENT_RULES, data);
   // Rule keys are field names; the inputs are ev-<name>
@@ -1189,14 +1268,14 @@ async function saveEvent() {
     venue:    data.venue,
     billing:  data.billing,
     mobile:   data.mobile,
-    guests:   Math.max(0, parseInt(qv('ev-guests'), 10) || 0),
-    budget:   Math.max(0, qf('ev-budget') || 0),
+    guests:   data.guests,
+    budget:   data.budget,
     notes:    qv('ev-notes'),
     photoIds: id ? (D.events.find(e => e.id === id)?.photoIds || []) : [],
     _v: 2
   };
 
-  await putOne('events', record);
+  await putChecked('events', record, id ? D.events.find(r => r.id === id) : null);
   if (id) D.events = D.events.map(e => e.id === id ? record : e);
   else    D.events.push(record);
 
@@ -1298,12 +1377,13 @@ function openExpModal(arg) {
 
 /* Bill photos inside the expense sheet */
 function startExpSession(ex) {
-  expWork = { id: ex?.id || uid('EX'), bills: [], added: [], removed: [], saved: false };
+  expWork = { id: ex?.id || uid('EX'), bills: [], added: [], removed: [], saved: false, ready: Promise.resolve(), pending: 0 };
   renderExpBills();
   if (ex && (ex.billIds || []).length) {
     const id = ex.id;
-    getBillsForExpense(id).then(bills => {
-      if (expWork.id !== id) return;            // sheet moved on meanwhile
+    const session = expWork;
+    expWork.ready = getBillsForExpense(id).then(bills => {
+      if (expWork !== session) return;            // sheet moved on meanwhile
       expWork.bills = bills.map(b => ({ id: b.id, data: b.data }));
       renderExpBills();
     });
@@ -1324,14 +1404,17 @@ function renderExpBills() {
 }
 
 async function addBillsToSheet(files) {
-  for (const file of Array.from(files)) {
-    try {
-      const b = await saveBill(expWork.id, file);
-      expWork.bills.push(b);
-      expWork.added.push(b.id);
-    } catch { showToast('Could not read that photo – फोटो वाचता आला नाही', 'error'); }
-  }
-  renderExpBills();
+  const session = expWork;
+  session.pending++;
+  try {
+    await session.ready;
+    for (const file of Array.from(files)) {
+      const b = await saveBill(session.id, file);
+      if (expWork !== session) { await deletePhoto(b.id); continue; }
+      session.bills.push(b); session.added.push(b.id);
+    }
+  } catch (e) { showToast('Could not save that photo. Check storage and try again.', 'error'); }
+  finally { session.pending--; if (expWork === session) renderExpBills(); }
 }
 
 function viewBill(billId) {
@@ -1370,6 +1453,10 @@ async function snapBills(files) {
 }
 
 async function saveExpense({ next = false } = {}) {
+  const session = expWork;
+  await session.ready;
+  if (expWork !== session) return;
+  if (session.pending) { showToast('Please wait for the bill photo to finish saving.', 'error'); return; }
   const pay  = q('exp-pay').dataset.value || 'paid';
   const data = { evId: qv('exp-ev'), amt: qf('exp-amt'), date: qv('exp-date') };
   const { valid, errors } = validate(EXPENSE_RULES, data);
@@ -1397,12 +1484,11 @@ async function saveExpense({ next = false } = {}) {
     billIds: expWork.bills.map(b => b.id)
   };
 
-  await putOne('expenses', record);
+  await commitChanges([{ store: 'expenses', record, expected: D.expenses.find(r => r.id === record.id) || D.drafts.find(r => r.id === record.id) || null }, ...expWork.removed.map(id => ({ store: 'photos', id, unchecked: true }))], { check: true, extraStores: ['events', 'vendors'] });
   // A filled-in draft becomes a real expense
   D.drafts = D.drafts.filter(d => d.id !== record.id);
   const i = D.expenses.findIndex(x => x.id === record.id);
   if (i >= 0) D.expenses[i] = record; else D.expenses.push(record);
-  for (const bid of expWork.removed) await deletePhoto(bid);
   expWork.saved = true;
   writePref('ffv2_lastexp', { cat: record.cat, head: record.head, mode: record.mode || readPref('ffv2_lastexp', {}).mode });
 
@@ -1454,7 +1540,7 @@ async function saveCPay() {
   const id = qv('cpay-id');
   const record = { id: id || uid('CP'), evId, amt: data.amt, date: data.date, mode: qv('cpay-mode'), notes: qv('cpay-notes') };
 
-  await putOne('cPays', record);
+  await putChecked('cPays', record, id ? D.cPays.find(r => r.id === id) : null);
   if (id) D.cPays = D.cPays.map(p => p.id === id ? record : p);
   else    D.cPays.push(record);
 
@@ -1490,7 +1576,7 @@ async function saveVendor() {
   const id = qv('ven-id');
   const record = { id: id || uid('VN'), name: data.name, cat: qv('ven-cat'), specialty: qv('ven-specialty'), phone: data.phone, notes: qv('ven-notes') };
 
-  await putOne('vendors', record);
+  await putChecked('vendors', record, id ? D.vendors.find(r => r.id === id) : null);
   if (id) D.vendors = D.vendors.map(v => v.id === id ? record : v);
   else    D.vendors.push(record);
 
@@ -1531,7 +1617,7 @@ async function saveVPay() {
   const old = id ? D.vPays.find(p => p.id === id) : null;
   const record = { id: id || uid('VP'), venId, evId: qv('vpay-ev'), cat: old?.cat || '', head: old?.head || '', amt: data.amt, date: data.date, mode: qv('vpay-mode'), notes: qv('vpay-notes') };
 
-  await putOne('vPays', record);
+  await putChecked('vPays', record, id ? D.vPays.find(r => r.id === id) : null);
   if (id) D.vPays = D.vPays.map(p => p.id === id ? record : p);
   else    D.vPays.push(record);
 
@@ -1543,6 +1629,12 @@ async function saveVPay() {
 /* ── DELETE (with Undo) ──────────────────────────── */
 async function deleteRow(type, id) {
   const rec = D[type].find(x => x.id === id); if (!rec) return;
+  if (type === 'vendors' && (D.expenses.some(x => x.venId === id) || D.vPays.some(x => x.venId === id))) {
+    showToast('This vendor has accounting history. Keep the vendor to preserve balances.', 'error'); return;
+  }
+  if (type === 'events' && (D.cPays.some(x => x.evId === id) || D.expenses.some(x => x.evId === id) || D.vPays.some(x => x.evId === id))) {
+    showToast('This event has accounting history. Remove its entries individually first.', 'error'); return;
+  }
   const removed = { [type]: [rec] };
   let photos = [];
 
@@ -1550,6 +1642,7 @@ async function deleteRow(type, id) {
   if (type === 'events') {
     removed.cPays    = D.cPays.filter(p => p.evId === id);
     removed.expenses = D.expenses.filter(x => x.evId === id);
+    removed.drafts = D.drafts.filter(x => x.evId === id);
     photos = await getPhotosForEvent(id);
   } else if (type === 'vendors') {
     removed.vPays = D.vPays.filter(p => p.venId === id);
@@ -1572,12 +1665,14 @@ async function deleteRow(type, id) {
     if ((x.billIds || []).length) photos.push(...await getBillsForExpense(x.id));
   }
 
+  const deletions = Object.entries(removed).flatMap(([store, recs]) => recs.map(r => ({ store: storeOf(store), id: r.id, expected: r })));
+  deletions.push(...photos.map(p => ({ store: 'photos', id: p.id, expected: p })));
+  await commitChanges(deletions, { check: true });
   for (const [store, recs] of Object.entries(removed)) {
     const ids = new Set(recs.map(r => r.id));
-    for (const r of recs) await deleteOne(storeOf(store), r.id);
     D[store] = D[store].filter(x => !ids.has(x.id));
   }
-  for (const p of photos) await deletePhoto(p.id);
+  changesChannel?.postMessage('changed');
 
   // Deleting the record whose page is open → leave that page
   const leaving = (type === 'events' && CT === 'evdetail' && curRef === id) ||
@@ -1588,11 +1683,10 @@ async function deleteRow(type, id) {
   showToast('Deleted – हटवले', 'success', {
     label: 'Undo – परत',
     run: async () => {
-      for (const [store, recs] of Object.entries(removed)) {
-        for (const r of recs) await putOne(storeOf(store), r);
-        D[store].push(...recs);
-      }
-      for (const p of photos) await putOne('photos', p);
+      const restores = Object.entries(removed).flatMap(([store, recs]) => recs.map(record => ({ store: storeOf(store), record, expected: null })));
+      restores.push(...photos.map(record => ({ store: 'photos', record, expected: null })));
+      await commitChanges(restores, { check: true, extraStores: ['events', 'vendors'] });
+      await loadAll(); changesChannel?.postMessage('changed');
       refreshCurrent();
       showToast('Restored – परत आणले');
     }
@@ -1618,13 +1712,12 @@ async function handlePhotoInput(files) {
 
   showLoading(true);
   try {
-    for (const file of Array.from(files)) {
-      const dataUrl = await readFileAsDataUrl(file);
-      const photoId = await savePhoto(pendingPhotoEvId, dataUrl);
-      if (!ev.photoIds) ev.photoIds = [];
-      ev.photoIds.push(photoId);
-    }
-    await putOne('events', ev);
+    const expected = { ...ev };
+    const urls = [];
+    for (const file of Array.from(files)) urls.push(await readFileAsDataUrl(file));
+    const saved = await saveEventPhotos(expected, urls);
+    D.events = D.events.map(e => e.id === saved.id ? saved : e);
+    changesChannel?.postMessage('changed');
     showToast('Photo added – फोटो जोडला');
     showEvDetail(pendingPhotoEvId, { fromHistory: true });
   } finally {
@@ -1648,7 +1741,8 @@ function openLightbox(src, onDelete) {
   q('lb-delete').hidden = !onDelete;
   q('lb-img').src = src;
   q('lightbox').style.display = 'flex';
-  openOverlay(() => { q('lightbox').style.display = 'none'; lbOnDelete = null; });
+  q('lightbox').classList.add('active');
+  openOverlay(() => { q('lightbox').style.display = 'none'; q('lightbox').classList.remove('active'); lbOnDelete = null; });
 }
 
 function openEventPhoto(evId, photoId) {
@@ -1669,9 +1763,12 @@ async function deleteCurrentPhoto() {
     actions: [{ label: 'Delete – हटवा', value: true, style: 'btn-danger' }]
   });
   if (!ok) return;
-  await deletePhoto(photoId);
   const ev = D.events.find(e => e.id === evId);
-  if (ev) { ev.photoIds = (ev.photoIds || []).filter(id => id !== photoId); await putOne('events', ev); }
+  if (!ev) throw new Error('Event was removed. Refresh before changing its photos.');
+  const record = { ...ev, photoIds: (ev.photoIds || []).filter(id => id !== photoId) };
+  await commitChanges([{ store: 'events', record, expected: ev }, { store: 'photos', id: photoId, unchecked: true }], { check: true });
+  D.events = D.events.map(e => e.id === evId ? record : e);
+  changesChannel?.postMessage('changed');
   await closeOverlay();
   showToast('Photo deleted – फोटो हटवला');
   showEvDetail(evId, { fromHistory: true });
@@ -1708,11 +1805,11 @@ async function saveLinkExpenses() {
   const checked = [...document.querySelectorAll('#link-exp-list input[type=checkbox]:checked')].map(cb => cb.value);
   if (!checked.length) { showToast('Select an expense – खर्च निवडा', 'error'); return; }
 
-  for (const id of checked) {
-    const x = D.expenses.find(e => e.id === id);
-    // Linking an existing expense records who supplied it; it was already paid
-    if (x) { x.venId = venId; if (!x.pay) x.pay = 'paid'; await putOne('expenses', x); }
-  }
+  const edits = checked.map(id => D.expenses.find(e => e.id === id)).filter(Boolean).map(expected => ({
+    store: 'expenses', expected, record: { ...expected, venId, pay: expected.pay || 'paid' }
+  }));
+  await commitChanges(edits, { check: true, extraStores: ['events', 'vendors'] });
+  await loadAll();
   closeModals();
   showToast(`${checked.length} expense${checked.length > 1 ? 's' : ''} linked – जोडले`);
   refreshCurrent();
@@ -1722,6 +1819,7 @@ async function saveLinkExpenses() {
 // Opens the phone's share sheet (WhatsApp, Drive, email…) so the backup leaves the
 // phone; where sharing files isn't supported (most desktops) it downloads instead.
 async function exportData() {
+  if (!launched || q('pin-screen').classList.contains('active')) { showToast('Unlock the app before exporting.', 'error'); return; }
   let file;
   showLoading(true);
   try {
@@ -1754,6 +1852,7 @@ async function exportData() {
 }
 
 async function handleImport(file) {
+  if (!launched || q('pin-screen').classList.contains('active')) return;
   if (!file) return;
   const reader = new FileReader();
   reader.onload = async e => {
@@ -1777,11 +1876,12 @@ async function handleImport(file) {
       showLoading(true);
       await importAllData(payload, mode);
       await loadAll();
+      changesChannel?.postMessage('changed');
       go('home');
       renderPage('home');
       showToast('Imported – आयात झाली');
     } catch (err) {
-      showToast('Import failed – आयात अयशस्वी', 'error');
+      showToast(err.message || 'Import failed. Existing data was kept. – आयात अयशस्वी', 'error');
       console.error(err);
     } finally {
       showLoading(false);
@@ -1844,7 +1944,9 @@ function bindAllEvents() {
       case 'export':       exportData(); break;
       case 'period':       period = id; writePref('ffv2_period', id); renderPage(CT); break;
       case 'ev-filter':    F.ev = id; rEvents(); break;
-      case 'exp-filter':   F.exp = id; rExp(); break;
+      case 'exp-filter': expensePage = 1; F.exp = id; rExp(); break;
+      case 'expense-prev': expensePage--; rExp(); window.scrollTo(0, 0); break;
+      case 'expense-next': expensePage++; rExp(); window.scrollTo(0, 0); break;
     }
   });
 
@@ -1854,7 +1956,7 @@ function bindAllEvents() {
   });
 
   // Phone Back button / gesture
-  window.addEventListener('popstate', onPopState);
+
 
   // Keyboard: Enter/Space on role=button cards, Escape closes the top overlay
   document.addEventListener('keydown', e => {
@@ -1887,7 +1989,7 @@ function bindAllEvents() {
 
   // Search boxes filter as you type
   q('ev-q').addEventListener('input', e => { F.evQ = e.target.value.trim(); rEvents(); });
-  q('exp-q').addEventListener('input', e => { F.expQ = e.target.value.trim(); rExp(); });
+  q('exp-q').addEventListener('input', e => { expensePage = 1; F.expQ = e.target.value.trim(); rExp(); });
   q('ven-q').addEventListener('input', e => { F.venQ = e.target.value.trim(); rVen(); });
 
   // Photo / import inputs
@@ -1921,17 +2023,17 @@ function bindAllEvents() {
   });
 
   // Sheet buttons
-  q('btn-save-event').addEventListener('click', saveEvent);
-  q('btn-save-exp').addEventListener('click', () => saveExpense());
-  q('btn-save-exp-next').addEventListener('click', () => saveExpense({ next: true }));
+  q('btn-save-event').addEventListener('click', () => runSave('event', saveEvent));
+  q('btn-save-exp').addEventListener('click', () => runSave('expense', () => saveExpense()));
+  q('btn-save-exp-next').addEventListener('click', () => runSave('expense', () => saveExpense({ next: true })));
   q('btn-del-exp').addEventListener('click', () =>
     deleteFromSheet(D.drafts.some(d => d.id === qv('exp-id')) ? 'drafts' : 'expenses', 'exp-id'));
-  q('btn-save-cpay').addEventListener('click', saveCPay);
+  q('btn-save-cpay').addEventListener('click', () => runSave('cpay', saveCPay));
   q('btn-del-cpay').addEventListener('click', () => deleteFromSheet('cPays', 'cpay-id'));
-  q('btn-save-ven').addEventListener('click', saveVendor);
-  q('btn-save-vpay').addEventListener('click', saveVPay);
+  q('btn-save-ven').addEventListener('click', () => runSave('vendor', saveVendor));
+  q('btn-save-vpay').addEventListener('click', () => runSave('vpay', saveVPay));
   q('btn-del-vpay').addEventListener('click', () => deleteFromSheet('vPays', 'vpay-id'));
-  q('btn-save-link').addEventListener('click', saveLinkExpenses);
+  q('btn-save-link').addEventListener('click', () => runSave('link', saveLinkExpenses));
 
   // Settings panel / FAB
   q('drawer-toggle').addEventListener('click', openDrawer);
@@ -1965,19 +2067,14 @@ function bindPinScreen() {
     key.addEventListener('click', () => pinKey(key.dataset.val));
   });
   q('pin-alt').addEventListener('click', async () => {
-    const ok = await askSheet({
-      title: 'Forgot PIN? – पिन विसरलात?',
-      message: 'Opening without the PIN removes the PIN lock. Set a new one from Settings.',
-      actions: [{ label: 'Open & remove PIN – पिन काढा', value: true, style: 'btn-danger' }]
-    });
-    if (!ok) return;
-    await setMeta('pin_hash', null);
-    q('pin-screen').classList.remove('active');
-    launchApp();
+    await askSheet({ title: 'Forgot PIN? – पिन विसरलात?',
+      message: 'For privacy, this screen cannot remove your PIN. Your records remain on this device. A previously exported backup can be imported in a separate browser profile. Do not clear this app or browser data.',
+      actions: [{ label: 'Keep my data – माहिती सुरक्षित ठेवा', value: true, style: 'btn-primary' }] });
   });
 }
 
-window.FF = { exportData, openDrawer };
+window.FF = { exportData };
+navigator.storage?.persist?.().then(granted => { if (!granted) console.info('Storage is best effort; keep an off-device backup.'); }).catch(() => {});
 
 bindPinScreen();
 boot();
