@@ -23,7 +23,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '2.4.3';
+const APP_BUILD = '2.4.4';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -111,10 +111,9 @@ async function runSave(key, task) {
   const buttons = [...document.querySelectorAll('[id^="btn-save-"]')];
   buttons.forEach(b => b.disabled = true);
   try {
-    await Promise.race([
-      task(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Save operation timed out. Storage may be busy.')), 12000))
-    ]);
+    // The database transaction owns cancellation. Releasing this lock before
+    // the task settles would allow a second write and a late completion.
+    await task();
     changesChannel?.postMessage('changed');
   } catch (e) {
     console.error(e);
@@ -129,6 +128,9 @@ async function runSave(key, task) {
     if (!activeSaves.size) buttons.forEach(b => b.disabled = false);
   }
 }
+window.addEventListener('ffdb-update-needed', () => showToast('A storage update is available. Finish your entry, then close and reopen the app.', 'error'));
+window.addEventListener('pageshow', syncOverlayAccessibility);
+window.addEventListener('focus', syncOverlayAccessibility);
 window.addEventListener('ff-migration-error', e => showToast('Legacy data could not be migrated. Originals were kept. ' + e.detail, 'error'));
 window.addEventListener('unhandledrejection', e => {
   e.preventDefault(); console.error(e.reason); showLoading(false);
@@ -421,12 +423,9 @@ document.addEventListener('visibilitychange', () => {
     } else if (hiddenAt && Date.now() - hiddenAt > 30000 && !activeSaves.size && !overlays.length) {
       loadAll().then(refreshCurrent).catch(err => console.warn('Wake refresh error:', err));
     }
-    // Clean up any stale save locks if returning from long sleep
-    if (activeSaves.size) {
-      activeSaves.clear();
-      const buttons = [...document.querySelectorAll('[id^="btn-save-"]')];
-      buttons.forEach(b => b.disabled = false);
-    }
+    // Never clear an in-flight save just because the app became visible.
+    syncOverlayAccessibility();
+
   }
 });
 function openOverlay(hide, after) {
@@ -449,7 +448,15 @@ function closeOverlay() {
   if (reloadPending && !overlays.length) { reloadPending = false; loadAll().then(refreshCurrent); }
   if (!history.state?.overlay) { o.after?.(); return Promise.resolve(); }
   return new Promise(res => {
-    popWaiters.push(() => { o.after?.(); res(); });
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true; clearTimeout(timer);
+      const index = popWaiters.indexOf(finish); if (index >= 0) popWaiters.splice(index, 1);
+      if (history.state?.overlay) history.replaceState({ tab: CT, ref: curRef, depth: 0 }, '');
+      o.after?.(); syncOverlayAccessibility(); res();
+    };
+    const timer = setTimeout(finish, 600);
+    popWaiters.push(finish);
     history.back();
   });
 }
@@ -1418,9 +1425,9 @@ function startExpSession(ex) {
       if (expWork !== session) return;            // sheet moved on meanwhile
       expWork.bills = bills.map(b => ({ id: b.id, data: b.data }));
       renderExpBills();
-    }).catch(err => {
-      console.warn('Could not load bill attachments:', err);
     });
+    // Observe rejection while retaining it for Save, which must not discard bills.
+    expWork.ready.catch(err => console.warn('Could not load bill attachments:', err));
   }
 }
 
@@ -1488,12 +1495,7 @@ async function snapBills(files) {
 
 async function saveExpense({ next = false } = {}) {
   const session = expWork;
-  try {
-    await Promise.race([
-      session.ready,
-      new Promise(res => setTimeout(res, 2500))
-    ]);
-  } catch {}
+  await session.ready;
   if (expWork !== session) return;
   if (session.pending) { showToast('Please wait for the bill photo to finish saving.', 'error'); return; }
   const pay  = q('exp-pay').dataset.value || 'paid';

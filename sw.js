@@ -1,6 +1,6 @@
 /** Offline release cache: install the complete app, then serve that release consistently. */
 
-const CACHE_NAME = 'flavor-fusion-v2-cache-v12';
+const CACHE_NAME = 'flavor-fusion-v2-cache-v13';
 // The Classic FFexp / FFmobile pages are retired: no longer linked or cached offline
 const PRECACHE = [
   './',
@@ -26,7 +26,7 @@ self.addEventListener('install', (e) => {
     caches.open(CACHE_NAME)
       // 'reload' skips the browser's HTTP cache so the precache is this release's files
       .then((cache) => cache.addAll(PRECACHE.map((u) => new Request(u, { cache: 'reload' }))))
-      .then(() => self.skipWaiting())
+
   );
 });
 
@@ -59,27 +59,12 @@ self.addEventListener('fetch', (e) => {
   );
 });
 
-// The install step commits a complete release to this cache. Controlled pages use
-// that release consistently; worker update checks bring in the next complete set.
+// Serve the complete installed release. A slow request must not mix an old
+// cached module with a newly deployed module in an already-running client.
 async function networkFirst(request) {
   const cache = await caches.open(CACHE_NAME);
-  const fromCache = async () =>
-    (await cache.match(request, { ignoreSearch: true })) ||
-    (request.mode === 'navigate' ? await cache.match('./index.html') : undefined);
-
-  // 'no-cache' revalidates with the server (cheap 304 when unchanged)
-  const fresh = (request.mode === 'navigate' ? fetch(request) : fetch(request, { cache: 'no-cache' }))
-    .then((res) => {
-      if (res && res.ok) cache.put(request, res.clone());
-      return res;
-    });
-  const slow = new Promise((resolve) => setTimeout(resolve, NETWORK_TIMEOUT_MS, 'slow'));
-
-  try {
-    const first = await Promise.race([fresh, slow]);
-    if (first !== 'slow') return first;
-    return (await fromCache()) || (await fresh);
-  } catch {
-    return (await fromCache()) || Response.error();
-  }
+  const cached = await cache.match(request, { ignoreSearch: true });
+  if (cached) return cached;
+  if (request.mode === 'navigate') { const page = await cache.match('./index.html'); if (page) return page; }
+  try { return await fetch(request); } catch { return Response.error(); }
 }
