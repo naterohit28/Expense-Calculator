@@ -8,7 +8,7 @@ The icon uses a bold serving cloche above two ledger lines, with deep teal (`#12
 
 An offline-first app for recording event expenses, client collections, vendor purchases and payments, with bill photographs and event profitability views.
 
-**Current release: v2.4.5** · Android package: `com.flavorfusion.expenses`
+**Current release: v2.4.6** · Android package: `com.flavorfusion.expenses`
 
 [Open the live app](https://expense-calculator-kohl.vercel.app/) · [Download releases](https://github.com/naterohit28/Expense-Calculator/releases) · [Reliability notes](docs/RELIABILITY.md) · [Report a bug](https://github.com/naterohit28/Expense-Calculator/issues)
 
@@ -122,17 +122,17 @@ For safe testing, import a **copy** into the desktop test app or a separate brow
 2. Export a backup from the existing app.
 3. Transfer the APK to the phone and install it **over the existing app**. Android may ask you to allow installation from the application used to open the file.
 4. Close the APK and any browser tabs open to the same site, then reopen it.
-5. Check the web build shown in **Settings**; the current expected value is **v2.4.5**.
+5. Check the web build shown in **Settings**; the current expected value is **v2.4.6**.
 
 Do not uninstall the old app or clear Chrome/site data just to force an update. If Android refuses an update because of a signing conflict, stop and check the package/signing identity first.
 
-The v2.4.5 APK has versionCode **6** and uses the same signer as the supplied earlier APKs. Its v2/v3 signatures and ZIP alignment were verified during preparation. The public certificate association is in [`.well-known/assetlinks.json`](public/.well-known/assetlinks.json).
+The v2.4.6 APK has versionCode **7** and uses the same signer as the supplied earlier APKs. Its v2/v3 signatures and ZIP alignment were verified during preparation. The public certificate association is in [`.well-known/assetlinks.json`](public/.well-known/assetlinks.json).
 
-The **APK version and cached web build are separate**. Installing a new wrapper does not itself guarantee that an already-open browser client has activated the newest service worker. A service-worker update waits for old clients to close to avoid changing app files during an active form.
+The **APK version and cached web build are separate**. Installing a new wrapper does not itself guarantee that an already-open browser client has activated the newest service worker. From v2.4.6, an update activates while older clients remain open, with each open page pinned to its complete release. Reload after saving to switch to the new build.
 
 ## Windows desktop test app
 
-1. Download `CaterDesk-Desktop-v2.4.5.zip` from [Releases](https://github.com/naterohit28/Expense-Calculator/releases).
+1. Download `CaterDesk-Desktop-v2.4.6.zip` from [Releases](https://github.com/naterohit28/Expense-Calculator/releases).
 2. Extract the **entire ZIP** into a folder.
 3. Keep the `app` directory beside `CaterDesk-Desktop.exe`.
 4. Run `CaterDesk-Desktop.exe`.
@@ -143,7 +143,7 @@ No Node.js, Python or administrator installation is required to use the prepared
 
 - Fixed local address: `http://127.0.0.1:19891/`
 - Dedicated profile: `%LOCALAPPDATA%\FlavorFusionDesktopTest\EdgeProfile`
-- Included web build: v2.4.5
+- Included web build: v2.4.6
 
 Desktop test records are separate from the phone and normal browser profiles. Import a backup copy if you want to test existing records. The desktop package does not automatically update from the website; download a new package for a newer packaged build. Replacing app assets does not require deleting the profile.
 
@@ -187,7 +187,7 @@ The runner starts a temporary server on a random loopback port and uses fresh he
 | `tests/idle-recovery.cjs` | Queued-write cancellation, foregrounding during saving, missed history events, delayed bill loading, closed connections, simulated long background/PIN interval and repeated entry/tab cycles |
 | `tests/security-smoke.cjs` | Configured CSP applied to local responses, event saving, theme and language smoke checks |
 
-Results and screenshots appear under ignored `test-artifacts/`. The v2.4.4 validation run passed **35 checks**. A separate real **181-second idle soak** against the compiled desktop server also passed; that soak is not part of `npm test`.
+Results and screenshots appear under ignored `test-artifacts/`. The v2.4.4 validation run passed **35 checks**. The new upgrade regression adds **8 checks**, including a v2.4.4 upgrade with open forms and database preservation. It uses Git history from commit `bdb6a5a`, so run it from a normal Git clone rather than a source ZIP. A separate real **181-second idle soak** against the compiled desktop server also passed; that soak is not part of `npm test`.
 
 Mobile-sized browser tests and simulated time are not a certification of physical Android sleep, process killing, camera capture, native sharing or storage eviction. Test those on a phone with a retained backup.
 
@@ -259,7 +259,7 @@ The owner's Downloads workspace is organized separately from the Git repository:
 Expense-Calculator-main/
 ├── START-HERE.txt
 ├── Apps/
-│   ├── CaterDesk-v2.4.5.apk
+│   ├── CaterDesk-v2.4.6.apk
 │   └── Desktop/               Extracted Windows test app
 ├── Project/
 │   ├── Web/                  This Git checkout
@@ -298,7 +298,7 @@ The current hosted site deploys from this repository's main branch on Vercel. Ve
 | --- | --- |
 | Save waits or reports busy storage | Let the operation finish/cancel. Close other app windows that may hold a transaction, then retry the retained form. Do not repeatedly clear browser data. |
 | App looks frozen after returning | Check for a visible PIN/confirmation screen; finish it. If needed, retain a backup and reopen the app. Report the build, screen, action, idle duration and exact error text. |
-| Settings shows an older build | Close the APK and all tabs for the same site, then reopen online. A waiting worker does not take over an active old client. |
+| Settings shows an older build | Open online to download the update, save your entry, then reopen once more. In v2.4.6+, use Check for app updates and Reload saved app. Do not clear storage. |
 | Records appear missing in another browser/desktop | Check the original origin and browser profile. Environments do not synchronize automatically. Import a backup copy into the intended test environment. |
 | A backup is rejected | Keep the file, read the error and verify its format, IDs, dates, amounts and references. Do not delete current records to bypass validation. |
 | “Changed in another window” | Close the stale form, refresh the records and enter the change again. |
@@ -321,3 +321,9 @@ When reporting a bug, include the app build, Android/browser or Windows/Edge ver
 - Hosting headers improve defense in depth; they are not a security certification or a substitute for careful handling of exported records and signing material.
 
 Private signing keys, passwords, encrypted credential files, environment secrets, business backups and generated executables are excluded from source control. Public release assets contain only the intended distributable binaries/package and verification material.
+
+### Update troubleshooting (v2.4.6)
+
+The Android APK wraps the hosted web app; its package version can differ from the web build shown in Settings. Updates now activate while other tabs remain open. Existing open entries keep their original release until navigation, while a reload loads the latest installed release without clearing IndexedDB. Settings offers **Check for app updates**, followed by an explicit **Reload saved app** action, blocked while a form or save is active.
+
+If a previous desktop server is already running, the launcher now reports the conflict instead of silently opening the old build. Exit its tray server and launch the current executable. The data profile and local port remain unchanged.
