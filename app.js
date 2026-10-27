@@ -23,7 +23,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '2.4.2';
+const APP_BUILD = '2.4.3';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -110,9 +110,24 @@ async function runSave(key, task) {
   activeSaves.add(key);
   const buttons = [...document.querySelectorAll('[id^="btn-save-"]')];
   buttons.forEach(b => b.disabled = true);
-  try { await task(); changesChannel?.postMessage('changed'); }
-  catch (e) { console.error(e); const msg = e.message?.includes('changed in another') ? e.message : (e.message && e.message !== 'full' ? 'Could not save: ' + e.message + ' – जतन झाले नाही' : 'Could not save. Your entry is still here. Check free storage and try again. – जतन झाले नाही'); showToast(msg, 'error'); }
-  finally { activeSaves.delete(key); if (!activeSaves.size) buttons.forEach(b => b.disabled = false); }
+  try {
+    await Promise.race([
+      task(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Save operation timed out. Storage may be busy.')), 12000))
+    ]);
+    changesChannel?.postMessage('changed');
+  } catch (e) {
+    console.error(e);
+    const msg = e.message?.includes('changed in another')
+      ? e.message
+      : (e.message && e.message !== 'full'
+          ? 'Could not save: ' + e.message + ' – जतन झाले नाही'
+          : 'Could not save. Your entry is still here. Check free storage and try again. – जतन झाले नाही');
+    showToast(msg, 'error');
+  } finally {
+    activeSaves.delete(key);
+    if (!activeSaves.size) buttons.forEach(b => b.disabled = false);
+  }
 }
 window.addEventListener('ff-migration-error', e => showToast('Legacy data could not be migrated. Originals were kept. ' + e.detail, 'error'));
 window.addEventListener('unhandledrejection', e => {
@@ -148,6 +163,7 @@ async function boot() {
   try {
     await checkAndMigrate();
     clearTimeout(stuckTimer);
+    window.removeEventListener('ffdb-blocked', explainStuck);
     await loadAll();
     await seedIfEmpty();
     lastExport = await getMeta('last_export');
@@ -162,9 +178,11 @@ async function boot() {
       launchApp();
     }
   } catch (err) {
+    clearTimeout(stuckTimer);
     console.error('[Boot]', err);
     showToast('App failed to start. Please refresh.', 'error');
   } finally {
+    clearTimeout(stuckTimer);
     showLoading(false);
   }
 }
@@ -394,9 +412,21 @@ document.addEventListener('keydown', e => {
   else if (!e.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) { e.preventDefault(); first?.focus(); }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) hiddenAt = Date.now();
-  else if (hasPin && hiddenAt && Date.now() - hiddenAt > 60000 && !activeSaves.size) {
-    showPinScreen('unlock'); syncOverlayAccessibility();
+  if (document.hidden) {
+    hiddenAt = Date.now();
+  } else {
+    if (hasPin && hiddenAt && Date.now() - hiddenAt > 60000 && !activeSaves.size) {
+      showPinScreen('unlock');
+      syncOverlayAccessibility();
+    } else if (hiddenAt && Date.now() - hiddenAt > 30000 && !activeSaves.size && !overlays.length) {
+      loadAll().then(refreshCurrent).catch(err => console.warn('Wake refresh error:', err));
+    }
+    // Clean up any stale save locks if returning from long sleep
+    if (activeSaves.size) {
+      activeSaves.clear();
+      const buttons = [...document.querySelectorAll('[id^="btn-save-"]')];
+      buttons.forEach(b => b.disabled = false);
+    }
   }
 });
 function openOverlay(hide, after) {
@@ -1388,6 +1418,8 @@ function startExpSession(ex) {
       if (expWork !== session) return;            // sheet moved on meanwhile
       expWork.bills = bills.map(b => ({ id: b.id, data: b.data }));
       renderExpBills();
+    }).catch(err => {
+      console.warn('Could not load bill attachments:', err);
     });
   }
 }
@@ -1456,7 +1488,12 @@ async function snapBills(files) {
 
 async function saveExpense({ next = false } = {}) {
   const session = expWork;
-  await session.ready;
+  try {
+    await Promise.race([
+      session.ready,
+      new Promise(res => setTimeout(res, 2500))
+    ]);
+  } catch {}
   if (expWork !== session) return;
   if (session.pending) { showToast('Please wait for the bill photo to finish saving.', 'error'); return; }
   const pay  = q('exp-pay').dataset.value || 'paid';

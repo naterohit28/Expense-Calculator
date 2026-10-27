@@ -12,11 +12,29 @@ const STORES     = ['events','expenses','vendors','cPays','vPays','photos','meta
 let _db = null;
 let _opening = null;   // one open request at a time, however many callers
 
+export function resetDB() {
+  if (_db) {
+    try { _db.close(); } catch {}
+    _db = null;
+  }
+  _opening = null;
+}
+
 /* ── OPEN / INIT ─────────────────────────────────── */
-export function openDB() {
-  if (_db) return Promise.resolve(_db);
+export function openDB(force = false) {
+  if (force) resetDB();
+  if (_db) {
+    try {
+      // Test if connection is still healthy; if closed/closing this throws InvalidStateError
+      _db.transaction('meta', 'readonly');
+      return Promise.resolve(_db);
+    } catch {
+      resetDB();
+    }
+  }
   if (_opening) return _opening;
   _opening = new Promise((resolve, reject) => {
+    let finished = false;
     const req = indexedDB.open(DB_NAME, DB_VERSION);
 
     // An older copy of the app is still open elsewhere (another tab, the installed app
@@ -39,45 +57,73 @@ export function openDB() {
     };
 
     req.onsuccess = e => {
+      finished = true;
       _db = e.target.result;
+      _opening = null;
+      // Invalidate connection if closed by OS or sleep
+      _db.onclose = () => { resetDB(); };
       // A newer version wants to upgrade: step aside and reload into it, so updates
       // never get stuck behind this copy
-      _db.onversionchange = () => { _db.close(); _db = null; location.reload(); };
+      _db.onversionchange = () => { resetDB(); location.reload(); };
       resolve(_db);
     };
-    req.onerror = e => { _opening = null; reject(e.target.error); };
+    req.onerror = e => {
+      finished = true;
+      resetDB();
+      reject(e.target.error || new Error('Failed to open database'));
+    };
+
+    setTimeout(() => {
+      if (!finished && _opening) {
+        resetDB();
+        reject(new Error('Storage open timed out.'));
+      }
+    }, 8000);
   });
   return _opening;
 }
 
+// Resilient transaction executor: catches InvalidStateError / connection dropped and retries once
+async function withTx(run) {
+  try {
+    const db = await openDB();
+    return await run(db);
+  } catch (err) {
+    const isConnLoss = err && (err.name === 'InvalidStateError' || /connection is closed|closing|closed/i.test(err.message || ''));
+    if (isConnLoss) {
+      console.warn('IDB connection closed or invalid. Reopening and retrying...', err);
+      const freshDb = await openDB(true);
+      return await run(freshDb);
+    }
+    throw err;
+  }
+}
+
 /* ── GENERIC CRUD ────────────────────────────────── */
 export async function getAll(store) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
+  return withTx(db => new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readonly');
     const req = tx.objectStore(store).getAll();
     req.onsuccess = () => resolve(req.result || []);
     req.onerror   = () => reject(req.error);
-  });
+  }));
 }
 
 export async function getOne(store, id) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
+  return withTx(db => new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readonly');
     const req = tx.objectStore(store).get(id);
     req.onsuccess = () => resolve(req.result || null);
     req.onerror   = () => reject(req.error);
-  });
+  }));
 }
 
 // Every write resolves only after the entire transaction commits.
 export async function commitChanges(changes, { clear = [], check = false, extraStores = [] } = {}) {
-  const db = await openDB();
   const guardedDelete = check && changes.some(c => !c.record && ['events', 'vendors'].includes(c.store));
   const names = [...new Set([...clear, ...extraStores, ...(guardedDelete ? STORES : []), ...changes.map(c => c.store)])];
   if (!names.length) return;
-  return new Promise((resolve, reject) => {
+  return withTx(db => new Promise((resolve, reject) => {
     const tx = db.transaction(names, 'readwrite');
     let failure;
     tx.oncomplete = () => {
@@ -193,7 +239,7 @@ export async function commitChanges(changes, { clear = [], check = false, extraS
         };
       }
     } catch (e) { failure = e; tx.abort(); }
-  });
+  }));
 }
 export async function putOne(store, record) { await commitChanges([{ store, record }]); return record.id; }
 export async function putChecked(store, record, expected = null) {
@@ -223,12 +269,11 @@ export async function savePhoto(eventId, dataUrl) {
 }
 
 export async function getPhotosForEvent(eventId) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
+  return withTx(db => new Promise((resolve, reject) => {
     const req = db.transaction('photos', 'readonly').objectStore('photos').index('eventId').getAll(eventId);
     req.onsuccess = () => resolve((req.result || []).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')));
     req.onerror   = () => reject(req.error);
-  });
+  }));
 }
 
 export async function deletePhoto(photoId) {
@@ -248,31 +293,39 @@ export async function saveEventPhotos(event, dataUrls) {
 // If the OS stopped the app after a bill image committed but before its form was
 // saved, preserve the attachment as a draft instead of leaving an invisible orphan.
 export async function recoverUnlinkedBills() {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
+  return withTx(db => new Promise((resolve, reject) => {
     const tx = db.transaction(['photos', 'expenses'], 'readwrite');
-    const req = tx.objectStore('photos').getAll();
+    const index = tx.objectStore('photos').index('expenseId');
     tx.oncomplete = resolve;
     tx.onerror = tx.onabort = () => reject(tx.error || new Error('Bill recovery aborted'));
+    const req = index.openKeyCursor();
+    const groups = new Map();
     req.onsuccess = () => {
-      const groups = new Map();
-      for (const photo of req.result) if (photo.expenseId) {
-        if (!groups.has(photo.expenseId)) groups.set(photo.expenseId, []);
-        groups.get(photo.expenseId).push(photo.id);
-      }
-      for (const [id, ids] of groups) {
-        const get = tx.objectStore('expenses').get(id);
-        get.onsuccess = () => {
-          const old = get.result;
-          const missing = ids.filter(id => !(old?.billIds || []).includes(id));
-          if (old && !missing.length) return;
-          const d = new Date(); const date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-          const record = old || { id, draft: true, amt: 0, evId: '', date, createdAt: d.toISOString(), notes: 'Recovered bill attachment', billIds: [] };
-          tx.objectStore('expenses').put({ ...record, billIds: [...(record.billIds || []), ...missing], _rev: (record._rev || 0) + 1 });
-        };
+      const cursor = req.result;
+      if (cursor) {
+        const expenseId = cursor.key;
+        const photoId = cursor.primaryKey;
+        if (expenseId) {
+          if (!groups.has(expenseId)) groups.set(expenseId, []);
+          groups.get(expenseId).push(photoId);
+        }
+        cursor.continue();
+      } else {
+        if (!groups.size) return;
+        for (const [id, ids] of groups) {
+          const get = tx.objectStore('expenses').get(id);
+          get.onsuccess = () => {
+            const old = get.result;
+            const missing = ids.filter(bid => !(old?.billIds || []).includes(bid));
+            if (old && !missing.length) return;
+            const d = new Date(); const date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            const record = old || { id, draft: true, amt: 0, evId: '', date, createdAt: d.toISOString(), notes: 'Recovered bill attachment', billIds: [] };
+            tx.objectStore('expenses').put({ ...record, billIds: [...(record.billIds || []), ...missing], _rev: (record._rev || 0) + 1 });
+          };
+        }
       }
     };
-  });
+  }));
 }
 
 /* ── BILL / INVOICE PHOTOS ───────────────────────── */
@@ -285,12 +338,11 @@ export async function saveBill(expenseId, file) {
 }
 
 export async function getBillsForExpense(expenseId) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
+  return withTx(db => new Promise((resolve, reject) => {
     const req = db.transaction('photos', 'readonly').objectStore('photos').index('expenseId').getAll(expenseId);
     req.onsuccess = () => resolve((req.result || []).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')));
     req.onerror   = () => reject(req.error);
-  });
+  }));
 }
 
 // Decode straight from the File (no full-size data URL in memory), longest side capped
@@ -449,7 +501,7 @@ export async function importAllData(payload, mode = 'replace', { migration = fal
     });
   });
 }
-export const APP_VERSION = '2.4.2';
+export const APP_VERSION = '2.4.3';
 export async function checkAndMigrate() {
   await openDB();
   const storedVer = await getMeta('app_version');

@@ -1,6 +1,6 @@
 {
   "name": "flavor-fusion",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "private": true,
   "description": "Offline expense app with isolated browser regression tests",
   "scripts": {
