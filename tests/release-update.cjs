@@ -24,4 +24,3 @@ const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),
  const checks=['v2.4.4 updates with two old tabs open','Open legacy form and its matching assets retained','New navigation receives CaterDesk v2.4.6','Existing database metadata retained','Settings update check reports current release','Explicit reload blocked while form is open','Old form saves after worker activation; record visible after upgrade','New release reloads offline'];fs.writeFileSync('test-artifacts/release-update-results.json',JSON.stringify({pass:true,checks},null,2));console.log(checks.map(c=>c+' PASS').join('\n'));
  }finally{if(browser)await browser.close();await new Promise(r=>server.close(r))}
 })().catch(e=>{console.error(e);process.exitCode=1});
-
