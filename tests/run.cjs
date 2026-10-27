@@ -5,12 +5,13 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 process.chdir(root);
+const webRoot = path.join(root, 'public');
 fs.mkdirSync('test-artifacts', { recursive: true });
 const mime = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-  const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
-  if (!file.startsWith(root + path.sep) || pathname.split('/').some(p => p.startsWith('.'))) { res.writeHead(403); res.end(); return; }
+  const file = path.resolve(webRoot, '.' + (pathname === '/' ? '/index.html' : pathname));
+  if (!file.startsWith(webRoot + path.sep) || pathname.split('/').some(p => p.startsWith('.') && p !== '.well-known')) { res.writeHead(403); res.end(); return; }
   fs.readFile(file, (err, body) => {
     if (err) { res.writeHead(404); res.end(); return; }
     res.setHeader('Content-Type', mime[path.extname(file)] || 'application/octet-stream');

@@ -1,4 +1,6 @@
 {
+  "framework": null,
+  "outputDirectory": "public",
   "headers": [
     {
       "source": "/sw.js",

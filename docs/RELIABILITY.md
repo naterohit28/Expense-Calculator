@@ -29,7 +29,7 @@ A separate real 181-second idle test through the compiled desktop launcher saved
 and reloaded both a new desktop entry and a pre-filled mobile-sized form without
 page errors. This is not a physical Android sleep/OS-kill certification.
 
-For desktop testing, see `desktop/README.txt`. Build a portable Windows launcher
+For desktop testing, see [`desktop/README.txt`](../desktop/README.txt). Build a portable Windows launcher
 with `desktop/build.ps1 -OutputDirectory <new-output-folder>`. It uses Microsoft
 Edge, a dedicated profile and a fixed loopback origin. Desktop records do not
 automatically sync with the phone.
@@ -99,8 +99,8 @@ process-death timing, browser eviction, the installed APK or its active browser.
 The supplied APK launches the existing Vercel site as a Trusted Web Activity.
 The web fixes take effect after this source is deployed there and the phone's
 service worker updates. Reinstalling the APK is not required for the web fixes.
-Check Settings for web build **v2.4.1**, then test with a backup retained off-device.
+Check Settings for web build **v2.4.4**, then test with a backup retained off-device.
 Do not clear site/Chrome data to force an update. If old app windows are open,
 close and reopen them so they load the updated cached release.
 
-No live deployment or physical-device test is implied by the local test results.
+The v2.4.4 release was deployed. Physical-device sleep/OS-kill testing remains outside the browser validation described here.
