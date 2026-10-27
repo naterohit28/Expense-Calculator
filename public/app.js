@@ -23,7 +23,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '2.4.6';
+const APP_BUILD = '2.4.7';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -1361,6 +1361,7 @@ function setExpCat(cat, head = '') {
   q('exp-cats').innerHTML = Object.keys(EXPENSE_HEADS).map(c =>
     `<button type="button" class="cat-chip" data-cat="${esc(c)}" aria-pressed="${c === cat}">${catIcon(c, 20)}${esc(c)}</button>`).join('');
   populateSelect('exp-head', EXPENSE_HEADS[cat] || [], head);
+  populateVendorSelect(qv('exp-vendor'));
 }
 
 function setExpDue(date) {
@@ -1391,16 +1392,27 @@ function setExpPay(pay) {
   q('exp-vendor-lbl').innerHTML = credit
     ? 'Owed to – कोणाला देणे <span class="req">*</span>'
     : 'Vendor – विक्रेता';
+  populateVendorSelect(qv('exp-vendor'));
 }
 
 function populateVendorSelect(selected = '') {
   const selStr = String(selected ?? '').trim();
-  populateSelect('exp-vendor', [
-    { v: '', l: 'None – कोणी नाही' },
-    ...[...D.vendors].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).map(v => ({ v: String(v.id), l: v.name })),
-    { v: '__new', l: '+ New vendor – नवीन विक्रेता' }
-  ], selStr);
-  q('exp-vendor').dataset.prev = selStr;
+  const normal = value => String(value || '').normalize('NFKC').split(' – ')[0].trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+  const category = normal(qv('exp-cat')), head = normal(qv('exp-head'));
+  const groups = [[], [], []];
+  for (const vendor of [...D.vendors].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))) {
+    const sameCategory = category && normal(vendor.cat) === category;
+    const exact = sameCategory && head && normal(vendor.specialty) === head;
+    groups[exact ? 0 : sameCategory ? 1 : 2].push(vendor);
+  }
+  const labels = ['Matching category & subcategory – जुळणारे विक्रेते', 'Same category – त्याच प्रकारातील', 'Other vendors – इतर विक्रेते'];
+  const option = vendor => `<option value="${esc(String(vendor.id))}">${esc(vendor.name)}</option>`;
+  q('exp-vendor').innerHTML = '<option value="">Choose vendor – विक्रेता निवडा</option>' +
+    groups.map((vendors, i) => vendors.length ? `<optgroup label="${esc(labels[i])}">${vendors.map(option).join('')}</optgroup>` : '').join('') +
+    '<option value="__new">+ New vendor – नवीन विक्रेता</option>';
+  // Reordering suggestions must not replace an edited or explicitly chosen vendor.
+  q('exp-vendor').value = D.vendors.some(v => String(v.id) === selStr) ? selStr : '';
+  q('exp-vendor').dataset.prev = q('exp-vendor').value;
 }
 
 function openExpModal(arg) {
@@ -2076,6 +2088,7 @@ function bindAllEvents() {
   });
   q('exp-due').addEventListener('change', e => setExpDue(e.target.value));
   q('exp-ev').addEventListener('change', updateExpEvHint);
+  q('exp-head').addEventListener('change', () => populateVendorSelect(qv('exp-vendor')));
   q('exp-vendor').addEventListener('change', e => {
     if (e.target.value !== '__new') { e.target.dataset.prev = e.target.value; return; }
     e.target.value = e.target.dataset.prev || '';
