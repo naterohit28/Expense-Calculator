@@ -503,6 +503,79 @@ export function menuById(id) {
   if (!id) return null;
   return SAVED_MENUS.find(m => m.id === id) || MENUS.find(m => m.id === id) || null;
 }
+/* ── MEAL SERVICES (meal-by-meal menus) ── */
+/* Each meal of an event is a service with its own date, time, guests, rate, library menu it started from, and dishes.
+   An event keeps its older fields (meals, mealPlan, dishes, menu) as before; services are a view built from them, so
+   events saved before this, older backups and an older app version open in another tab all keep working.
+   Only an event whose menu was edited meal by meal stores `services`, together with `servicesSig`: a fingerprint of
+   the older fields it matches. If those fields were changed elsewhere (an older app version), the fingerprint no
+   longer matches and the services are rebuilt from them, keeping each dish's extra details where the dish is still
+   there (`stale` tells the screen to say so). One service per meal; a service's `date` is set only when it differs
+   from the event date. Dish `head` is who prepares it: '' our kitchen, else the counter. A dish `shared` is served
+   at every meal. */
+export const DISH_CATS = ['starter', 'main', 'bread', 'rice', 'dal', 'dessert', 'beverage', 'other'];
+export const DIETS = ['veg', 'jain', 'egg', 'nonveg'];
+const DISH_EXTRAS = ['id', 'cat', 'diet'];
+function hashText(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0; return h.toString(36); }
+export function servicesSig(ev) {
+  const plan = Object.fromEntries(MEAL_ORDER.filter(m => ev.mealPlan?.[m]).map(m => [m, [ev.mealPlan[m].guests, ev.mealPlan[m].rate, ev.mealPlan[m].menu || '']]));
+  return hashText(JSON.stringify([MEAL_ORDER.filter(m => (ev.meals || []).includes(m)), plan, (ev.dishes || []).map(d => [d.name, d.meal || '', d.head || ''])]));
+}
+const extrasOf = d => Object.fromEntries(DISH_EXTRAS.filter(k => d?.[k] !== undefined).map(k => [k, structuredClone(d[k])]));
+export function eventServices(ev) {
+  const stored = Array.isArray(ev?.services) ? ev.services : null;
+  if (stored && ev.servicesSig === servicesSig(ev)) return { services: stored, stale: false };
+  const meals = MEAL_ORDER.filter(m => (ev?.meals || []).includes(m));
+  const dishes = ev?.dishes || [];
+  const shared = dishes.filter(d => !d.meal || !meals.includes(d.meal));
+  const services = (meals.length ? meals : ['']).map(m => {
+    const prev = stored?.find(s => s.meal === m);
+    const plan = m ? ev.mealPlan?.[m] : null;
+    const tplId = plan?.menu || (!m ? ev.menu : '') || '';
+    const tpl = tplId ? menuById(tplId) : null;
+    const carry = (d, sh) => {
+      const old = prev?.dishes?.find(x => x.name.toLowerCase() === d.name.toLowerCase() && !!x.shared === sh);
+      return { name: d.name, head: d.head || '', ...(d.manual ? { manual: true } : {}), ...(sh ? { shared: true } : {}), ...extrasOf(old) };
+    };
+    let list = [...dishes.filter(d => m && d.meal === m).map(d => carry(d, false)), ...shared.map(d => carry(d, !!m))];
+    // A library menu chosen for the meal with no dishes typed yet: its dishes are shown, marked as not yet confirmed
+    const fromTemplate = !list.length && !!tpl?.items?.length;
+    if (fromTemplate) list = tpl.items.map(name => ({ name, head: '' }));
+    const keepNums = prev && !(prev.guests > 0 && prev.rate > 0);   // never brings back a meal price removed elsewhere
+    return { meal: m, ...(prev?.date && prev.date !== ev.date ? { date: prev.date } : {}), ...(prev?.time ? { time: prev.time } : {}),
+      guests: plan?.guests ?? (keepNums ? prev.guests || 0 : 0), rate: plan?.rate ?? (keepNums ? prev.rate || 0 : 0),
+      template: tpl ? { id: tplId, name: tpl.name } : null, dishes: list, ...(fromTemplate ? { fromTemplate: true } : {}) };
+  });
+  return { services, stale: !!stored };
+}
+/* Services → the fields to save: the services themselves and the older fields every other screen and an older app
+   version read. Meal prices are kept only with both guests and a rate, as on the event form. */
+export function applyServices(ev, services) {
+  const meals = services.map(s => s.meal).filter(Boolean);
+  const mealPlan = {}, dishes = [], seenShared = new Set();
+  for (const s of services) {
+    if (s.meal && s.guests > 0 && s.rate > 0) mealPlan[s.meal] = { guests: s.guests, rate: s.rate, ...(s.template?.id ? { menu: s.template.id } : {}) };
+    if (s.fromTemplate) continue;
+    for (const d of s.dishes) {
+      const base = { name: d.name, head: d.head || '', ...(d.manual ? { manual: true } : {}) };
+      if (d.shared || !s.meal) { const k = d.name.toLowerCase(); if (!seenShared.has(k)) { seenShared.add(k); dishes.push(base); } }
+      else dishes.push({ ...base, meal: s.meal });
+    }
+  }
+  const best = Object.entries(mealPlan).filter(([, v]) => v.menu).sort((a, b) => b[1].guests * b[1].rate - a[1].guests * a[1].rate)[0];
+  const out = { meals, mealPlan, dishes, services: storedServices(services), ...(best ? { menu: best[1].menu } : {}) };
+  out.servicesSig = servicesSig({ ...ev, ...out });
+  return out;
+}
+// What is saved: a library menu's dishes shown for a meal with none typed are not saved as that meal's dishes
+const storedServices = list => list.map(s => { const { fromTemplate, ...x } = s; return { ...x, dishes: fromTemplate ? [] : x.dishes.map(d => ({ ...d })) }; });
+/* After the older fields were edited in this app (event form, menu sheet): rebuild the stored services from them so
+   they stay in step. The older fields are not touched. Events without stored services are left exactly as they are. */
+export function syncServices(record) {
+  if (!Array.isArray(record?.services) || record.servicesSig === servicesSig(record)) return record;
+  return { ...record, services: storedServices(eventServices(record).services), servicesSig: servicesSig(record) };
+}
+
 // Which menus suit a meal: those marked for it first, then menus not marked for any meal, then the rest
 export function menusForMeal(meal) {
   const list = allMenus(), fits = m => (m.meals || []).includes(meal), open = m => !(m.meals || []).length;

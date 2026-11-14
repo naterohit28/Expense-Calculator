@@ -16,7 +16,7 @@ import {
   validate, EVENT_RULES, EXPENSE_RULES, PAYMENT_RULES, VENDOR_RULES, VPAY_RULES,
   calcEventReceived, calcEventPL, toPaise, calcVendorBalance, isOnCredit, isPerson, unpaidCredit, unpaidBills, billKeyOf, daysUntil, addDays,
   sliceByPeriod, eventsMissingCosts, costByCategory, costVsUsual, priceCreep, sumRupees,
-  RECON_CHECKS, ACTIVE_ORDER, COUNT_MEALS, COUNT_METHODS, countPolicyAgreed, countKey, contractedFor, guestCountStatus, addOrderMessage, markOrderMessage, labourCovers, labourDuplicates, splitParts, checkSplit, equalSplit, pastSuggestions, eventGuests, gstPaise, clientDue, clientDueP, quoteOption, quoteOptions, QUOTE_STATUS, quoteTotal, checkQuote, nextQuoteDraft, quoteSuperseded, settlementStatus, SETTLE_KINDS, booksCheck, STOCK, duplicateBill, paymentSchedule, PAY_WHEN, counterGuests, counterSuggestion, lastCounterPlan, priceForMargin, priceForMarkup, marginPct, mealPlanTotal, MEAL_ORDER, menuChangeImpact, eventStage, reconStatus, reconciledIds, reconBlockers, reconcileFields, reopenFields, parseMenu, menuText, dishCounter, learnedDishes,
+  RECON_CHECKS, ACTIVE_ORDER, COUNT_MEALS, COUNT_METHODS, countPolicyAgreed, countKey, contractedFor, guestCountStatus, addOrderMessage, markOrderMessage, labourCovers, labourDuplicates, splitParts, checkSplit, equalSplit, pastSuggestions, eventGuests, gstPaise, clientDue, clientDueP, quoteOption, quoteOptions, QUOTE_STATUS, quoteTotal, checkQuote, nextQuoteDraft, quoteSuperseded, settlementStatus, SETTLE_KINDS, booksCheck, STOCK, duplicateBill, paymentSchedule, PAY_WHEN, counterGuests, counterSuggestion, lastCounterPlan, priceForMargin, priceForMarkup, marginPct, mealPlanTotal, MEAL_ORDER, menuChangeImpact, eventStage, reconStatus, reconciledIds, reconBlockers, reconcileFields, reopenFields, parseMenu, menuText, dishCounter, learnedDishes, syncServices,
   generateInsights, isOverdue, hashPin, verifyPin, isLegacyPinHash
 } from './utils.js';
 
@@ -24,7 +24,7 @@ import { icon, hydrateIcons, CAT_ICON } from './icons.js';
 import { initLang, getLang, setLang } from './i18n.js';
 
 // Shown in Settings; bump with each release so the phone can confirm which code it runs
-const APP_BUILD = '4.21.1';
+const APP_BUILD = '4.22.0';
 
 /* ── STATE ───────────────────────────────────────── */
 // drafts: bills snapped but not filled in yet. Stored in the expenses store with
@@ -1557,8 +1557,9 @@ function menuOrdersCard(ev) {
 // Save changed menu/orders on the event currently open
 async function patchEvent(id, patch, drop = []) {
   const ev = D.events.find(e => e.id === id); if (!ev) return null;
-  const record = { ...ev, ...patch };
+  let record = { ...ev, ...patch };
   for (const k of drop) delete record[k];
+  record = syncServices(record);   // meal-by-meal menus follow a menu edited here
   await putChecked('events', record, ev);
   D.events = D.events.map(e => e.id === id ? record : e);
   return record;
@@ -3617,7 +3618,7 @@ async function saveEvent() {
 
   const base = id ? formBase.ev : null;
   const meals = Object.keys(MEALS).filter(m => evMeals().includes(m));
-  const record = editedRecord(base, {
+  const record = syncServices(editedRecord(base, {
     id:       id || uid('EV'),
     name:     data.name,
     date:     data.date,
@@ -3639,7 +3640,7 @@ async function saveEvent() {
       // Older events keep their shape: an empty mobile or budget, or the format marker, is not added to them
       ...['mobile', 'notes', 'menu'].filter(k => !(base && k in base) && !{ mobile: data.mobile, notes: qv('ev-notes'), menu: mainMealMenu() || qv('ev-menu') }[k]),
       ...(!(Number(data.budget) > 0) && !(base && 'budget' in base) ? ['budget'] : []),
-      ...(base && !('_v' in base) ? ['_v'] : [])]);
+      ...(base && !('_v' in base) ? ['_v'] : [])]));
 
   // The advance is saved with the event in one go, as its first payment received
   const advance = adv !== '' ? { id: uid('CP'), evId: record.id, amt: adv, date: today(), mode: qv('ev-adv-mode'), notes: 'Advance – अॅडव्हान्स' } : null;

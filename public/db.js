@@ -539,6 +539,19 @@ export async function prepareImport(payload) {
       if (row.mealPlan !== undefined && (typeof row.mealPlan !== 'object' || row.mealPlan === null || Array.isArray(row.mealPlan) || Object.entries(row.mealPlan).some(([m, v]) => (v?.menu !== undefined && (typeof v.menu !== 'string' || v.menu.length > 64)) || !['breakfast', 'lunch', 'hightea', 'dinner', 'latenight'].includes(m) || !v || !Number.isSafeInteger(v.guests) || v.guests < 0 || (amount(v.rate, 'meal rate'), false)))) throw new Error('Invalid meal pricing');
       if (row.dishes?.some(d => !d || typeof d.name !== 'string' || (d.meal !== undefined && !['breakfast', 'lunch', 'hightea', 'dinner', 'latenight'].includes(d.meal)))) throw new Error('Invalid menu');
       if (row.menuVersions !== undefined && (!Array.isArray(row.menuVersions) || row.menuVersions.some(v => !v || !Array.isArray(v.dishes)))) throw new Error('Invalid menu history');
+      // Meal-by-meal menus (4.22.0): one service per meal, each with its own dishes
+      const MEAL_KEYS = ['', 'breakfast', 'lunch', 'hightea', 'dinner', 'latenight'];
+      const str = (v, max) => typeof v === 'string' && v.length <= max;
+      const badDish = d => !d || !str(d.name, 200) || !d.name.trim() || (d.head !== undefined && !str(d.head, 120)) || (d.id !== undefined && !str(d.id, 40))
+        || (d.cat !== undefined && !['starter', 'main', 'bread', 'rice', 'dal', 'dessert', 'beverage', 'other'].includes(d.cat))
+        || (d.diet !== undefined && (!Array.isArray(d.diet) || d.diet.some(x => !['veg', 'jain', 'egg', 'nonveg'].includes(x))))
+        || (d.shared !== undefined && typeof d.shared !== 'boolean') || (d.manual !== undefined && typeof d.manual !== 'boolean');
+      if (row.services !== undefined && (!Array.isArray(row.services) || row.services.length > 6 || new Set(row.services.map(s => s?.meal)).size !== row.services.length
+        || row.services.some(s => !s || !MEAL_KEYS.includes(s.meal) || (s.date !== undefined && !validDate(s.date)) || (s.time !== undefined && !str(s.time, 10))
+          || !Number.isSafeInteger(s.guests) || s.guests < 0 || (amount(s.rate, 'meal rate'), false)
+          || (s.template !== null && s.template !== undefined && (!str(s.template.id, 64) || !str(s.template.name, 120)))
+          || !Array.isArray(s.dishes) || s.dishes.length > 200 || s.dishes.some(badDish))
+        || typeof row.servicesSig !== 'string' || row.servicesSig.length > 16)) throw new Error('Invalid meal menus');
       if (row.logistics !== undefined && (typeof row.logistics !== 'object' || row.logistics === null || Array.isArray(row.logistics) || Object.values(row.logistics).some(v => typeof v !== 'string'))) throw new Error('Invalid venue logistics');
       if (row.recon != null && (typeof row.recon !== 'object' || Array.isArray(row.recon) || !Number.isSafeInteger(row.recon.costPaise) || !Number.isSafeInteger(row.recon.billPaise) || typeof row.recon.sig !== 'string')) throw new Error('Invalid reconciliation');
       if (row.reconHistory !== undefined && (!Array.isArray(row.reconHistory) || row.reconHistory.some(h => !h || typeof h !== 'object' || !['reconciled', 'reopened'].includes(h.action)))) throw new Error('Invalid reconciliation history');
@@ -610,7 +623,7 @@ export async function importAllData(payload, mode = 'replace', { migration = fal
     });
   }));
 }
-export const APP_VERSION = '4.21.1';
+export const APP_VERSION = '4.22.0';
 const COUNT_METHOD_IDS = ['tokens', 'tally', 'gate', 'coupons', 'joint', 'other'];
 // v4.18.0 kept menus in their own store (database version 5): copy them into meta once and empty that store
 export async function migrateLegacyMenus() {
